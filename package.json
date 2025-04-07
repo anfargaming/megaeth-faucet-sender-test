@@ -1,6 +1,6 @@
 {
-  "name": "megaeth-faucet-sender-test",
   "type": "module",
+  "name": "megaeth-faucet-sender-test",
   "version": "1.0.0",
   "description": "Terminal UI for sending Ethereum transactions with style",
   "main": "index.js",
@@ -8,11 +8,9 @@
     "start": "node index.js"
   },
   "dependencies": {
-    "blessed": "^0.1.81",
+    "chalk": "^5.3.0",
     "ethers": "^6.8.0",
     "figlet": "^1.5.2",
     "ora": "^6.1.2"
-  },
-  "author": "anfargaming",
-  "license": "MIT"
+  }
 }
