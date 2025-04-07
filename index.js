@@ -1,7 +1,7 @@
 const fs = require("fs");
 const { ethers } = require("ethers");
 const chalk = require("chalk");
-const ora = (await import('ora')).default;
+const ora = require("ora");
 const figlet = require("figlet");
 
 // Load private keys and target address
@@ -15,11 +15,12 @@ const rpcEndpoints = [
   "https://testnet.megaeth.io/rpc",
 ];
 
-let provider;
 const chainId = 6342;
 const gasLimit = 21000;
 const maxFeePerGas = ethers.parseUnits("0.0025", "gwei");
 const maxPriorityFeePerGas = ethers.parseUnits("0.001", "gwei");
+
+let provider;
 
 async function connectProvider() {
   for (const url of rpcEndpoints) {
@@ -28,7 +29,7 @@ async function connectProvider() {
       await p.getBlockNumber(); // test connection
       console.log(chalk.green(`✅ Connected to ${url}`));
       return p;
-    } catch (e) {
+    } catch {
       console.log(chalk.yellow(`⚠️ Failed to connect to ${url}`));
     }
   }
@@ -36,7 +37,7 @@ async function connectProvider() {
 }
 
 async function processWallet(privateKey, index, total) {
-  const spinner = ora(`Processing wallet [${index}/${total}]`).start();
+  const spinner = ora(`🔐 Processing wallet [${index}/${total}]`).start();
 
   try {
     const wallet = new ethers.Wallet(privateKey, provider);
@@ -66,17 +67,17 @@ async function processWallet(privateKey, index, total) {
 
     const response = await wallet.sendTransaction(tx);
     const receipt = await response.wait();
-
     const remainingBalance = await provider.getBalance(wallet.address);
+
     spinner.succeed(chalk.cyanBright(`✅ ${wallet.address}`));
-    console.log(chalk.green(`  💸 Sent: ${amountToSend.toFixed(6)} ETH`));
-    console.log(chalk.blue(`  🔗 Tx Link: https://megaexplorer.xyz/tx/${response.hash}`));
-    console.log(chalk.gray(`  🧾 Block: ${receipt.blockNumber}`));
-    console.log(chalk.gray(`  💼 Remaining: ${Number(ethers.formatEther(remainingBalance)).toFixed(6)} ETH`));
+    console.log(chalk.green(`   💸 Sent:        ${amountToSend.toFixed(6)} ETH`));
+    console.log(chalk.blue(`   🔗 Tx Link:     https://megaexplorer.xyz/tx/${response.hash}`));
+    console.log(chalk.gray(`   🧾 Block:       ${receipt.blockNumber}`));
+    console.log(chalk.gray(`   💼 Remaining:   ${Number(ethers.formatEther(remainingBalance)).toFixed(6)} ETH`));
     return { status: "success" };
 
   } catch (err) {
-    spinner.fail(chalk.red(`❌ Error with wallet: ${err.message}`));
+    spinner.fail(chalk.red(`❌ Error: ${err.message}`));
     return { status: "failed" };
   }
 }
@@ -91,6 +92,7 @@ async function processWallet(privateKey, index, total) {
   provider = await connectProvider();
 
   let success = 0, fail = 0, skipped = 0;
+
   for (let i = 0; i < privateKeys.length; i++) {
     const result = await processWallet(privateKeys[i], i + 1, privateKeys.length);
     if (result.status === "success") success++;
