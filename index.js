@@ -5,7 +5,6 @@ import chalk from 'chalk';
 import ora from 'ora';
 import blessed from 'blessed';
 import contrib from 'blessed-contrib';
-import cliProgress from 'cli-progress';
 
 // ====== Configuration ======
 const config = {
@@ -20,21 +19,16 @@ const config = {
 let provider;
 let privateKeys = [];
 let targetAddress = '';
-let screen, grid, logBox, donut, line, table;
-let ethFlowData = { x: [], y: [] };
+let screen, grid, processBox, statusBox, exitBox, logBox;
 let success = 0, failed = 0, skipped = 0;
-let progressBar;
 let isShuttingDown = false;
 
 // ====== Load Keys & Target ======
 function loadFiles() {
   console.log(chalk.blue('Step 1: Loading files...'));
   try {
-    if (!fs.existsSync('private_keys.txt')) {
-      throw new Error('private_keys.txt not found');
-    }
-    if (!fs.existsSync('target_address.txt')) {
-      throw new Error('target_address.txt not found');
+    if (!fs.existsSync('private_keys.txt') || !fs.existsSync('target_address.txt')) {
+      throw new Error('Required input files missing');
     }
     
     privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
@@ -44,8 +38,8 @@ function loadFiles() {
     
     targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
 
-    if (!privateKeys.length) throw new Error('No valid private keys found in private_keys.txt');
-    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address in target_address.txt');
+    if (!privateKeys.length) throw new Error('No valid private keys found');
+    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address');
     
     console.log(chalk.green(`Successfully loaded ${privateKeys.length} keys and target address: ${targetAddress}`));
     return true;
@@ -59,8 +53,8 @@ function loadFiles() {
 function initUI() {
   console.log(chalk.blue('Step 2: Initializing UI...'));
   if (!process.stdout.isTTY) {
-    console.error(chalk.red('Error: Interactive terminal required (no TTY detected)'));
-    return false;
+    console.error(chalk.red('Error: Interactive terminal required'));
+    process.exit(1);
   }
 
   try {
@@ -71,46 +65,38 @@ function initUI() {
       input: process.stdin,
       output: process.stdout,
       terminal: process.env.TERM || 'xterm-256color',
-      title: 'MegaETH Dashboard'
+      title: 'Custom MegaETH Dashboard'
     });
 
-    console.log(chalk.blue('Creating grid...'));
     grid = new contrib.grid({ rows: 12, cols: 12, screen });
 
-    console.log(chalk.blue('Setting up donut...'));
-    donut = grid.set(0, 0, 4, 4, contrib.donut, {
+    // Process Box (Top Left)
+    processBox = grid.set(0, 0, 3, 6, blessed.box, {
+      label: ' Process ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Processing wallets...'
+    });
+
+    // Status Box (Middle Left)
+    statusBox = grid.set(3, 0, 4, 6, blessed.box, {
       label: ' Status ',
-      radius: 16,
-      arcWidth: 8,
-      data: [
-        { label: 'Success', percent: 0, color: 'green' },
-        { label: 'Failed', percent: 0, color: 'red' },
-        { label: 'Skipped', percent: 0, color: 'yellow' }
-      ]
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Success: 0\nFailed: 0'
     });
 
-    console.log(chalk.blue('Setting up line graph...'));
-    line = grid.set(0, 4, 4, 8, contrib.line, {
-      label: ' ETH Flow ',
-      showLegend: true,
-      legend: { width: 12 }
+    // Exit Details and Key Box (Bottom Left)
+    exitBox = grid.set(7, 0, 5, 6, blessed.box, {
+      label: ' Screen Exit Details and Key ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Press q, Ctrl+C, or Esc to exit'
     });
 
-    console.log(chalk.blue('Setting up table...'));
-    table = grid.set(4, 0, 4, 12, contrib.table, {
-      label: ' Wallet Balances ',
-      columnWidth: [25, 15, 12, 18, 14],
-      columnSpacing: 2,
-      interactive: true,
-      fg: 'white',
-      selectedFg: 'white',
-      selectedBg: 'blue',
-      columns: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time']
-    });
-
-    console.log(chalk.blue('Setting up log box...'));
-    logBox = grid.set(8, 0, 4, 12, blessed.log, {
-      label: ' Live Logs ',
+    // Logs Box (Right Side)
+    logBox = grid.set(0, 6, 12, 6, blessed.log, {
+      label: ' Logs ',
       border: { type: 'line' },
       style: { fg: 'white', border: { fg: 'cyan' }},
       scrollable: true,
@@ -118,20 +104,17 @@ function initUI() {
       tags: true
     });
 
-    console.log(chalk.blue('Binding keys...'));
     screen.key(['q', 'C-c', 'escape'], () => {
       if (!isShuttingDown) gracefulShutdown();
     });
 
     screen.on('render', () => console.log(chalk.green('Screen rendered successfully')));
     screen.on('error', (err) => console.error(chalk.red('Screen error:'), err));
-    console.log(chalk.blue('Rendering initial screen...'));
     screen.render();
     console.log(chalk.green('UI initialized successfully'));
-    return true;
   } catch (err) {
     console.error(chalk.red('UI initialization failed:'), err.message);
-    return false;
+    process.exit(1);
   }
 }
 
@@ -143,19 +126,9 @@ function updateDashboard() {
   }
 
   console.log(chalk.blue('Updating dashboard...'));
-  donut.setData([
-    { label: 'Success', percent: (success / privateKeys.length) * 100 || 0, color: 'green' },
-    { label: 'Failed', percent: (failed / privateKeys.length) * 100 || 0, color: 'red' },
-    { label: 'Skipped', percent: (skipped / privateKeys.length) * 100 || 0, color: 'yellow' }
-  ]);
-
-  line.setData([{
-    title: 'ETH Sent',
-    x: ethFlowData.x,
-    y: ethFlowData.y,
-    style: { line: 'green' }
-  }]);
-
+  statusBox.setContent(
+    `Success: ${success}\nFailed: ${failed}`
+  );
   screen.render();
 }
 
@@ -166,10 +139,6 @@ function gracefulShutdown(code = 0) {
 
   console.log(chalk.blue('Initiating shutdown with code:', code));
   try {
-    if (progressBar) {
-      progressBar.stop();
-      console.log(chalk.blue('Progress bar stopped'));
-    }
     if (screen) {
       screen.program.clear();
       screen.program.disableMouse();
@@ -201,11 +170,8 @@ async function processWallet(pk, index) {
 
     if (balance < minBalanceWei) {
       skipped++;
-      logBox.log(`{yellow-fg}⚠ ${address} - Low balance (${balanceEth} ETH){/}`);
-      table.setData({
-        headers: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time'],
-        data: [...(table.rows || []), [address, balanceEth, 'Skipped', '-', now]]
-      });
+      logBox.log(`{yellow-fg}⚠ ${now} | ${address} - Low balance (${balanceEth} ETH){/}`);
+      updateDashboard();
       spinner.warn('Skipped');
       return;
     }
@@ -217,11 +183,8 @@ async function processWallet(pk, index) {
 
     if (amount <= 0n) {
       skipped++;
-      logBox.log(`{yellow-fg}⚠ ${address} - Insufficient after gas{/}`);
-      table.setData({
-        headers: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time'],
-        data: [...(table.rows || []), [address, balanceEth, 'Skipped', '-', now]]
-      });
+      logBox.log(`{yellow-fg}⚠ ${now} | ${address} - Insufficient after gas{/}`);
+      updateDashboard();
       spinner.warn('Too low after gas');
       return;
     }
@@ -239,27 +202,17 @@ async function processWallet(pk, index) {
 
     if (receipt.status === 1) {
       success++;
-      ethFlowData.x.push(index.toString());
-      ethFlowData.y.push(Number(amountEth));
-      logBox.log(`{green-fg}✔ ${now} | ${amountEth} ETH | ${tx.hash}{/}`);
-      table.setData({
-        headers: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time'],
-        data: [...(table.rows || []), [address, amountEth, 'Success', tx.hash.slice(0, 12) + '...', now]]
-      });
+      logBox.log(`{green-fg}✔ ${now} | ${amountEth} ETH sent to ${targetAddress} | ${tx.hash}{/}`);
+      updateDashboard();
       spinner.succeed(`Sent ${amountEth} ETH`);
     } else {
       throw new Error('Transaction reverted');
     }
   } catch (err) {
     failed++;
-    logBox.log(`{red-fg}✖ ${now} | Error: ${err.message}{/}`);
-    table.setData({
-      headers: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time'],
-      data: [...(table.rows || []), [address, '-', 'Failed', '-', now]]
-    });
-    spinner.fail(err.message.slice(0, 50));
-  } finally {
+    logBox.log(`{red-fg}✖ ${now} | ${address} | Error: ${err.message}{/}`);
     updateDashboard();
+    spinner.fail(err.message.slice(0, 50));
   }
 }
 
@@ -286,28 +239,15 @@ async function main() {
   console.log(chalk.green(`🚀 Consolidating to ${targetAddress}`));
   console.log(`🔑 Wallets: ${privateKeys.length}\n`);
 
-  if (!initUI()) {
-    gracefulShutdown(1);
-    return;
-  }
-
-  progressBar = new cliProgress.SingleBar({
-    format: '{bar} | {percentage}% | {value}/{total} wallets',
-    barCompleteChar: '█',
-    barIncompleteChar: '░'
-  }, cliProgress.Presets.shades_classic);
-
-  console.log(chalk.blue('Step 4: Starting wallet processing...'));
-  progressBar.start(privateKeys.length, 0);
+  initUI();
 
   try {
+    console.log(chalk.blue('Step 4: Starting wallet processing...'));
     for (let i = 0; i < privateKeys.length; i++) {
       console.log(chalk.blue(`Processing wallet ${i + 1}/${privateKeys.length}`));
       await processWallet(privateKeys[i], i);
-      progressBar.update(i + 1);
     }
 
-    progressBar.stop();
     logBox.log('{green-fg}\n✨ All transactions completed!{/}');
     logBox.log('{yellow-fg}Press q, Ctrl+C, or Esc to exit{/}');
   } catch (err) {
