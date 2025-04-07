@@ -1,216 +1,161 @@
-#!/usr/bin/env node
-import { ethers } from "ethers";
-import fs from "fs";
-import blessed from "blessed";
-import contrib from "blessed-contrib";
+import fs from 'fs';
+import ethers from 'ethers';
+import figlet from 'figlet';
+import chalk from 'chalk';
+import ora from 'ora';
+import blessed from 'blessed';
+import contrib from 'blessed-contrib';
 
-class ETHConsolidator {
-  constructor() {
-    this.RPC_ENDPOINTS = [
-      "https://carrot.megaeth.com/rpc",
-      "https://rpc.testnet.megaeth.com",
-      "https://testnet.megaeth.io/rpc"
-    ];
-    this.CHAIN_ID = 6342;
-    this.MIN_BALANCE = 0.0003; // updated threshold
-    this.TX_DELAY_MS = 1000;
-    this.successCount = 0;
-    this.failCount = 0;
-    this.skippedCount = 0;
-    this.tableData = [];
-    this.initUI();
-  }
+const targetAddress = fs.readFileSync('target_address.txt', 'utf8').trim();
+const privateKeys = fs.readFileSync('private_keys.txt', 'utf8').trim().split('\n');
 
-  initUI() {
-    this.screen = blessed.screen({ smartCSR: true });
-    this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
+const RPCs = [
+  "https://rpc.megaeth.tech", 
+  "https://megaeth.nodeguardians.io"
+];
 
-    this.logBox = this.grid.set(0, 0, 6, 9, contrib.log, {
-      label: " Transaction Logs ",
-      border: { type: "line", fg: "cyan" },
-      scrollbar: { style: { bg: "blue" } },
-    });
+const provider = new ethers.JsonRpcProvider(RPCs[Math.floor(Math.random() * RPCs.length)]);
 
-    this.walletTable = this.grid.set(6, 0, 6, 9, contrib.table, {
-      label: " Wallet Status ",
-      columnWidth: [20, 12, 12, 12, 12, 34],
-      columnSpacing: 2,
-      border: { type: "line", fg: "cyan" },
-    });
+const gasLimit = 21000;
+const minAmount = ethers.parseEther("0.0003");
 
-    this.statusBox = this.grid.set(0, 9, 12, 3, blessed.box, {
-      label: " Final Status ",
-      border: { type: "line", fg: "cyan" },
-      tags: true,
-      content: "",
-      style: {
-        fg: "white",
-        bg: "black",
-        border: { fg: "cyan" },
-      },
-    });
+const failedWallets = [];
 
-    this.screen.key(["q", "C-c"], () => process.exit(0));
-  }
+const screen = blessed.screen();
+const grid = new contrib.grid({ rows: 12, cols: 12, screen: screen });
 
-  log(message) {
-    this.logBox.log(message);
-    this.screen.render();
-  }
+const logBox = grid.set(0, 0, 6, 9, blessed.log, {
+  label: 'Transaction Logs',
+  border: 'line',
+  style: { border: { fg: 'cyan' } },
+  scrollable: true,
+  scrollbar: { ch: ' ', inverse: true },
+});
 
-  updateTable(address, currentBalance, transferAmount, status, remaining, info) {
-    const shortAddress = address.slice(0, 6) + "..." + address.slice(-4);
-    let statusColor = status;
-    if (status === "Success") statusColor = `{green-fg}${status}{/green-fg}`;
-    else if (status === "Failed") statusColor = `{red-fg}${status}{/red-fg}`;
-    else statusColor = `{yellow-fg}${status}{/yellow-fg}`;
+const walletTable = grid.set(6, 0, 6, 9, contrib.table, {
+  keys: true,
+  fg: 'green',
+  label: 'Wallet Status',
+  columnWidth: [20, 12, 12, 18, 50],
+  columnSpacing: 2,
+  interactive: false,
+});
 
-    this.tableData.push([
-      shortAddress,
-      currentBalance,
-      transferAmount,
-      statusColor,
-      remaining,
-      info,
-    ]);
+const finalBox = grid.set(0, 9, 12, 3, blessed.box, {
+  label: 'Final Status',
+  border: 'line',
+  style: { border: { fg: 'green' } },
+  content: '',
+});
 
-    this.walletTable.setData({
-      headers: ["Address", "Current", "Transfer", "Status", "Remain", "Info"],
-      data: this.tableData,
-    });
+screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
+screen.render();
 
-    this.updateStatusBox();
-    this.screen.render();
-  }
+const tableData = [];
 
-  updateStatusBox() {
-    const total = this.successCount + this.failCount + this.skippedCount;
-    this.statusBox.setContent(
-      `{bold}Total Success:{/bold} ${this.successCount}\n` +
-      `{bold}Total Failed:{/bold} ${this.failCount}\n` +
-      `{bold}Total Skipped:{/bold} ${this.skippedCount}\n` +
-      `{bold}Final Status:{/bold} ${total === this.privateKeys?.length ? "Completed" : "Processing..."}`
-    );
-    this.screen.render();
-  }
+const main = async () => {
+  let success = 0, failed = 0, skipped = 0;
 
-  async connect() {
-    for (const rpc of this.RPC_ENDPOINTS) {
-      try {
-        const provider = new ethers.JsonRpcProvider(rpc);
-        await provider.getBlockNumber();
-        this.provider = provider;
-        this.log(`✓ Connected to ${rpc}`);
-        return;
-      } catch {
-        this.log(`✗ Failed to connect to ${rpc}`);
-      }
-    }
-    throw new Error("Couldn't connect to any RPC");
-  }
+  for (let i = 0; i < privateKeys.length; i++) {
+    const pk = privateKeys[i].trim();
+    const wallet = new ethers.Wallet(pk, provider);
 
-  async loadConfig() {
+    let balance;
     try {
-      this.targetAddress = fs.readFileSync("target_address.txt", "utf-8").trim();
-      if (!ethers.isAddress(this.targetAddress)) throw new Error("Invalid target address");
-
-      this.privateKeys = fs.readFileSync("private_keys.txt", "utf-8")
-        .split("\n")
-        .map(x => x.trim())
-        .filter(Boolean);
-      if (this.privateKeys.length === 0) throw new Error("No private keys found");
+      balance = await provider.getBalance(wallet.address);
     } catch (err) {
-      throw new Error(`Config error: ${err.message}`);
+      logBox.log(`❌ Error fetching balance for ${wallet.address}`);
+      failed++;
+      failedWallets.push(wallet.address);
+      continue;
     }
-  }
 
-  async getBalance(address) {
-    const balance = await this.provider.getBalance(address);
-    return parseFloat(ethers.formatEther(balance));
-  }
+    const ethBalance = parseFloat(ethers.formatEther(balance));
+    const shortAddress = wallet.address.slice(0, 6) + "..." + wallet.address.slice(-4);
 
-  async processWallet(privateKey, index) {
-    const wallet = new ethers.Wallet(privateKey, this.provider);
-    const address = wallet.address;
+    if (balance < minAmount) {
+      logBox.log(`Current Balance: ${chalk.green(ethBalance)} ETH`);
+      logBox.log(chalk.yellow(`⚠️ Skipped: Not enough ETH to send.`));
+      skipped++;
+      tableData.push([shortAddress, ethBalance.toFixed(6), "0.000000", `S↓${ethBalance.toFixed(6)}`, "Low balance"]);
+      updateUI();
+      continue;
+    }
 
-    this.log(`\n[${index + 1}/${this.privateKeys.length}] Processing ${address}`);
+    let feeData;
+    try {
+      feeData = await provider.getFeeData();
+    } catch (err) {
+      logBox.log(`❌ Failed to get gas fee data`);
+      failed++;
+      failedWallets.push(wallet.address);
+      continue;
+    }
+
+    const estimatedFee = feeData.maxFeePerGas * BigInt(gasLimit);
+    const sendable = balance - estimatedFee;
+    if (sendable <= 0) {
+      logBox.log(`❌ Not enough for gas`);
+      skipped++;
+      tableData.push([shortAddress, ethBalance.toFixed(6), "0.000000", `S↓${ethBalance.toFixed(6)}`, "Low balance"]);
+      updateUI();
+      continue;
+    }
 
     try {
-      const balance = await this.getBalance(address);
-      this.log(`  Current Balance: ${balance.toFixed(6)} ETH`);
-
-      if (balance <= this.MIN_BALANCE) {
-        this.log(`  Skipping - balance below ${this.MIN_BALANCE} ETH threshold`);
-        this.skippedCount++;
-        this.updateTable(address, balance.toFixed(6), "0.000000", "Skipped", balance.toFixed(6), "Low balance");
-        return;
-      }
-
-      const sendAmount = balance - this.MIN_BALANCE;
-      this.log(`  Sending: ${sendAmount.toFixed(6)} ETH`);
-
       const tx = await wallet.sendTransaction({
-        to: this.targetAddress,
-        value: ethers.parseEther(sendAmount.toFixed(6)),
-        gasLimit: 21000,
-        chainId: this.CHAIN_ID,
-        type: 2,
+        to: targetAddress,
+        value: sendable,
+        maxFeePerGas: feeData.maxFeePerGas,
+        maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
+        gasLimit
       });
 
-      this.log(`  TX Hash: ${tx.hash}`);
-      const explorer = `https://megaexplorer.xyz/tx/${tx.hash}`;
-      this.log(`  Explorer: ${explorer}`);
+      const spinner = ora(`Sending: ${ethers.formatEther(sendable)} ETH`).start();
+      const receipt = await tx.wait();
 
-      await tx.wait();
-      this.log(`  Transaction confirmed`);
+      spinner.succeed(`TX Hash: ${tx.hash}`);
+      logBox.log(`Explorer: https://megaexplorer.xyz/tx/${tx.hash}`);
+      logBox.log(`Transaction confirmed`);
 
-      this.successCount++;
-      this.updateTable(
-        address,
-        balance.toFixed(6),
-        sendAmount.toFixed(6),
-        "Success",
-        this.MIN_BALANCE.toFixed(6),
-        `🔗 ${explorer}`
-      );
+      tableData.push([
+        shortAddress,
+        ethBalance.toFixed(6),
+        ethers.formatEther(sendable),
+        `Su${ethers.formatEther(balance - sendable)}`,
+        chalk.green("? ") + `https://megaexplorer.xyz/tx/${tx.hash}`
+      ]);
+
+      success++;
     } catch (err) {
-      this.failCount++;
-      const bal = await this.getBalance(address).catch(() => 0);
-      this.log(`  Error: ${err.message}`);
-      this.updateTable(
-        address,
-        bal.toFixed(6),
-        "0.000000",
-        "Failed",
-        bal.toFixed(6),
-        err.message.split("\n")[0].slice(0, 30) + "..."
-      );
+      logBox.log(`❌ Error: ${err.message.split('\n')[0]}`);
+      failed++;
+      failedWallets.push(wallet.address);
+      tableData.push([shortAddress, ethBalance.toFixed(6), "0.000000", `Fail${ethBalance.toFixed(6)}`, chalk.red("TX Failed")]);
     }
+
+    updateUI();
   }
 
-  async run() {
-    try {
-      await this.connect();
-      await this.loadConfig();
+  fs.writeFileSync("failed_wallets.txt", failedWallets.join('\n'));
 
-      this.log(`\n🔹 Target Address: ${this.targetAddress}`);
-      this.log(`🔹 Found ${this.privateKeys.length} wallets to process\n`);
+  finalBox.setContent(
+    `Total ${chalk.green('Success')}: ${success}\n` +
+    `Total ${chalk.red('Failed')}: ${failed}\n` +
+    `Total Skipped: ${skipped}\n` +
+    `Final Status: ${chalk.white('Completed')}`
+  );
+  screen.render();
+};
 
-      for (let i = 0; i < this.privateKeys.length; i++) {
-        await this.processWallet(this.privateKeys[i], i);
-        if (i < this.privateKeys.length - 1) {
-          await new Promise(r => setTimeout(r, this.TX_DELAY_MS));
-        }
-      }
-
-      this.log("\n✅ Consolidation complete!");
-    } catch (err) {
-      this.log(`\n❌ Fatal Error: ${err.message}`);
-    } finally {
-      this.updateStatusBox();
-      this.log("\nPress 'q' or Ctrl+C to exit");
-    }
-  }
+function updateUI() {
+  walletTable.setData({
+    headers: ['Address', 'Current', 'Transfer', 'Status', 'Info'],
+    data: tableData
+  });
+  screen.render();
 }
 
-new ETHConsolidator().run();
+console.clear();
+console.log(chalk.cyan(figlet.textSync('ETH Consolidator')));
+main();
