@@ -8,9 +8,10 @@
   },
   "dependencies": {
     "blessed": "^0.1.81",
+    "ethers": "^6.8.0",
     "figlet": "^1.5.2",
-    "ethers": "^6.8.0"
+    "ora": "^6.1.2"
   },
-  "author": "YourName",
+  "author": "anfargaming",
   "license": "MIT"
 }
