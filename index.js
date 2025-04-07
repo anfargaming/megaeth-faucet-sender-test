@@ -48,12 +48,14 @@ const logBox = grid.set(0, 0, 6, 6, contrib.log, {
   selectedFg: "green"
 });
 
-const donut = grid.set(0, 6, 6, 6, contrib.donut, {
+const donut = grid.set(0, 6, 6, 6, blessed.box, {
   label: "Success / Failed",
-  radius: 16,
-  arcWidth: 4,
-  yPadding: 2,
-  data: [] // Clear content
+  tags: true,
+  content: '',
+  style: {
+    fg: 'green',
+    border: { fg: 'cyan' }
+  }
 });
 
 const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
@@ -128,7 +130,7 @@ async function sendETH(privateKey, index) {
     data: tableData
   });
 
-  donut.setData([]); // Keep chart blank
+  donut.setContent(`\n  Total Success: {green-fg}${success}{/green-fg}\n  Total Failed: {red-fg}${failed}{/red-fg}\n  Final Status: Completed`);
   screen.render();
 }
 
