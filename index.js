@@ -7,12 +7,10 @@ import contrib from "blessed-contrib";
 class ETHConsolidator {
   constructor() {
     this.RPC_ENDPOINTS = [
-      "https://carrot.megaeth.com/rpc",
-      "https://rpc.testnet.megaeth.com",
-      "https://testnet.megaeth.io/rpc"
+      "https://carrot.megaeth.com/rpc"
     ];
     this.CHAIN_ID = 6342;
-    this.MIN_BALANCE = 0.0003; // updated threshold
+    this.MIN_BALANCE = 0.0015;
     this.TX_DELAY_MS = 1000;
     this.successCount = 0;
     this.failCount = 0;
@@ -102,7 +100,7 @@ class ETHConsolidator {
         this.provider = provider;
         this.log(`✓ Connected to ${rpc}`);
         return;
-      } catch {
+      } catch (err) {
         this.log(`✗ Failed to connect to ${rpc}`);
       }
     }
@@ -140,7 +138,7 @@ class ETHConsolidator {
       this.log(`  Current Balance: ${balance.toFixed(6)} ETH`);
 
       if (balance <= this.MIN_BALANCE) {
-        this.log(`  Skipping - balance below ${this.MIN_BALANCE} ETH threshold`);
+        this.log(`  Skipping - needs a certain amount of ETH`);
         this.skippedCount++;
         this.updateTable(address, balance.toFixed(6), "0.000000", "Skipped", balance.toFixed(6), "Low balance");
         return;
@@ -174,16 +172,20 @@ class ETHConsolidator {
         `🔗 ${explorer}`
       );
     } catch (err) {
+      const message = err?.message || "";
+      const isRateLimit = message.includes("rate limit");
+      if (isRateLimit) this.log(`  Rate limit hit. Retrying later.`);
+
       this.failCount++;
       const bal = await this.getBalance(address).catch(() => 0);
-      this.log(`  Error: ${err.message}`);
+      this.log(`  Error: ${message}`);
       this.updateTable(
         address,
         bal.toFixed(6),
         "0.000000",
         "Failed",
         bal.toFixed(6),
-        err.message.split("\n")[0].slice(0, 30) + "..."
+        message.split("\n")[0].slice(0, 30) + "..."
       );
     }
   }
