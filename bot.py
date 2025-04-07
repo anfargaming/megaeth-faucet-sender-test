@@ -6,15 +6,23 @@ from dotenv import load_dotenv
 from web3 import Web3
 from concurrent.futures import ThreadPoolExecutor
 
-# Try to import UI libraries (GUI mode)
-try:
+# Enhanced GUI check
+def check_gui_available():
+    try:
+        import tkinter as tk
+        if os.environ.get("DISPLAY") or os.name == "nt":
+            return True
+    except:
+        return False
+    return False
+
+GUI_AVAILABLE = check_gui_available()
+
+if GUI_AVAILABLE:
     import customtkinter as ctk
     import tkinter as tk
     from tkinter import scrolledtext
     from PIL import Image, ImageTk
-    GUI_AVAILABLE = True
-except:
-    GUI_AVAILABLE = False
 
 load_dotenv()
 
