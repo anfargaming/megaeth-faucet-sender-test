@@ -60,11 +60,11 @@ const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
   keys: true,
   fg: "white",
   label: "Wallet Status",
-  columnWidth: [42, 12, 15, 20]
+  columnWidth: [42, 12, 10, 60]
 });
 
 const exitInfo = grid.set(11, 0, 1, 12, blessed.box, {
-  content: "Press 'q' or Ctrl+C to exit",
+  content: "Press 'q' or Ctrl+C to exit. Status: Pending...",
   style: { fg: 'cyan' }
 });
 
@@ -83,14 +83,15 @@ async function getBalance(address) {
 async function sendETH(privateKey, index) {
   const wallet = new ethers.Wallet(privateKey, provider);
   const address = wallet.address;
-  logBox.log(`\n[${index + 1}] Wallet: ${address}`);
+
+  logBox.log(`\n[${index + 1}/${privateKeys.length}] Processing ${address}`);
 
   try {
     const balance = await getBalance(address);
-    logBox.log(`Balance: ${balance.toFixed(6)} ETH`);
+    logBox.log(`  Balance: ${balance.toFixed(6)} ETH`);
 
     if (balance <= 0.001) {
-      logBox.log("Skipping - insufficient balance");
+      logBox.log("  Skipping - insufficient balance");
       failed++;
       tableData.push([address, "0", "Failed", "Insufficient"]);
       return;
@@ -110,25 +111,25 @@ async function sendETH(privateKey, index) {
       type: 2
     });
 
-    logBox.log(`TX Hash: ${tx.hash}`);
-    tableData.push([address, amount.toFixed(6), "Success", tx.hash]);
+    const explorerUrl = `https://explorer.megaeth.com/tx/${tx.hash}`;
+    logBox.log(`  Sending: ${amount.toFixed(6)} ETH`);
+    logBox.log(`  TX Hash: ${tx.hash}`);
+    logBox.log(`  Explorer: ${explorerUrl}`);
+
+    tableData.push([address, amount.toFixed(6), "Success", explorerUrl]);
     success++;
   } catch (err) {
-    logBox.log(`Error: ${err.message}`);
+    logBox.log(`  Error: ${err.message}`);
     failed++;
-    tableData.push([address, "0", "Failed", err.message.slice(0, 15)]);
+    tableData.push([address, "0", "Failed", err.message.slice(0, 40)]);
   }
 
   walletTable.setData({
-    headers: ["Address", "Amount", "Status", "Info"],
+    headers: ["Address", "Amount", "Status", "Info / Link"],
     data: tableData
   });
 
-  donut.setData([
-    { percent: success / privateKeys.length * 100, label: "Success", color: "green" },
-    { percent: failed / privateKeys.length * 100, label: "Failed", color: "red" },
-  ]);
-
+  donut.setData([]); // clear donut content
   screen.render();
 }
 
@@ -140,6 +141,9 @@ async function run() {
   logBox.log("\nAll wallets processed.");
   logBox.log(`Total Success: ${success}`);
   logBox.log(`Total Failed: ${failed}`);
+  logBox.log("Final Status: Completed");
+
+  exitInfo.setContent(`Press 'q' or Ctrl+C to exit. Final Status: Completed | ✅ ${success} | ❌ ${failed}`);
   screen.render();
 }
 
