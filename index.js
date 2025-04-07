@@ -1,243 +1,280 @@
+import figlet from 'figlet';
 import { ethers } from 'ethers';
 import fs from 'fs';
 import chalk from 'chalk';
+import ora from 'ora';
 import blessed from 'blessed';
 import contrib from 'blessed-contrib';
 
-// ===== Configuration =====
-const CONFIG = {
+// ====== Configuration ======
+const config = {
   rpcUrl: 'https://carrot.megaeth.com/rpc',
   chainId: 6342,
-  minBalance: '0.002', // Minimum ETH balance to process
-  gasBuffer: 1.2, // 20% gas buffer
-  refreshInterval: 2000 // Dashboard refresh rate
+  minBalance: '0.002',
+  gasBuffer: 1.2,
+  refreshInterval: 15000
 };
 
-// ===== Dashboard Setup =====
-const screen = blessed.screen({
-  smartCSR: true,
-  title: 'MEGA ETH Consolidator'
-});
-
-const grid = new contrib.grid({ rows: 12, cols: 12, screen });
-
-// Status Donut Chart
-const donut = grid.set(0, 0, 4, 4, contrib.donut, {
-  label: ' Status ',
-  radius: 8,
-  arcWidth: 4,
-  data: [
-    { label: 'Success', percent: 0, color: 'green' },
-    { label: 'Failed', percent: 0, color: 'red' },
-    { label: 'Skipped', percent: 0, color: 'yellow' }
-  ]
-});
-
-// Process Logs
-const logBox = grid.set(4, 0, 6, 12, blessed.log, {
-  label: ' Process Logs ',
-  border: { type: 'line' },
-  style: {
-    fg: 'white',
-    border: { fg: 'cyan' }
-  },
-  scrollable: true,
-  scrollbar: {
-    ch: ' ',
-    inverse: true
-  },
-  keys: true,
-  vi: true
-});
-
-// Transaction Details Table
-const table = grid.set(10, 0, 2, 12, contrib.table, {
-  label: ' Transaction Details ',
-  columnWidth: [20, 12, 10, 24, 16],
-  columnSpacing: 2,
-  interactive: true
-});
-
-// Key Bindings Help
-const helpBar = blessed.box({
-  parent: screen,
-  bottom: 0,
-  left: 0,
-  width: '100%',
-  height: 1,
-  content: chalk.cyan('Q/ESC: Exit | ↑/↓: Scroll Logs | TAB: Switch Focus'),
-  style: {
-    bg: 'blue'
-  }
-});
-
-// ===== State Management =====
+// ====== Global State ======
 let provider;
 let privateKeys = [];
 let targetAddress = '';
-const stats = {
-  success: 0,
-  failed: 0,
-  skipped: 0,
-  totalETH: 0
-};
+let screen, grid, processBox, statusBox, exitBox, logBox;
+let success = 0, failed = 0, skipped = 0;
+let isShuttingDown = false;
 
-// ===== Core Functions =====
-function initialize() {
+// ====== Load Keys & Target ======
+function loadFiles() {
+  console.log(chalk.blue('Step 1: Loading files...'));
   try {
-    // Load and validate files
     if (!fs.existsSync('private_keys.txt') || !fs.existsSync('target_address.txt')) {
-      logBox.log(chalk.red('❌ Missing required files'));
-      return false;
+      throw new Error('Required input files missing');
     }
-
+    
     privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
       .split('\n')
       .map(line => line.trim())
-      .filter(line => /^(0x)?[0-9a-f]{64}$/i.test(line));
-
+      .filter(line => line && (line.length === 64 || line.length === 66));
+    
     targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
 
-    if (!privateKeys.length || !ethers.isAddress(targetAddress)) {
-      logBox.log(chalk.red('❌ Invalid wallet data'));
-      return false;
-    }
-
-    logBox.log(chalk.green(`✓ Loaded ${privateKeys.length} valid private keys`));
+    if (!privateKeys.length) throw new Error('No valid private keys found');
+    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address');
+    
+    console.log(chalk.green(`Successfully loaded ${privateKeys.length} keys and target address: ${targetAddress}`));
     return true;
   } catch (err) {
-    logBox.log(chalk.red(`❌ Initialization error: ${err.message}`));
+    console.error(chalk.red('❌ File loading failed:'), err.message);
     return false;
   }
 }
 
+// ====== Terminal UI Setup ======
+function initUI() {
+  console.log(chalk.blue('Step 2: Initializing UI...'));
+  if (!process.stdout.isTTY) {
+    console.error(chalk.red('Error: Interactive terminal required'));
+    process.exit(1);
+  }
+
+  try {
+    screen = blessed.screen({
+      smartCSR: true,
+      dockBorders: true,
+      fullUnicode: true,
+      input: process.stdin,
+      output: process.stdout,
+      terminal: process.env.TERM || 'xterm-256color',
+      title: 'Custom MegaETH Dashboard'
+    });
+
+    grid = new contrib.grid({ rows: 12, cols: 12, screen });
+
+    // Process Box (Top Left)
+    processBox = grid.set(0, 0, 3, 6, blessed.box, {
+      label: ' Process ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Processing wallets...'
+    });
+
+    // Status Box (Middle Left)
+    statusBox = grid.set(3, 0, 4, 6, blessed.box, {
+      label: ' Status ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Success: 0\nFailed: 0'
+    });
+
+    // Exit Details and Key Box (Bottom Left)
+    exitBox = grid.set(7, 0, 5, 6, blessed.box, {
+      label: ' Screen Exit Details and Key ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      content: 'Press q, Ctrl+C, or Esc to exit'
+    });
+
+    // Logs Box (Right Side)
+    logBox = grid.set(0, 6, 12, 6, blessed.log, {
+      label: ' Logs ',
+      border: { type: 'line' },
+      style: { fg: 'white', border: { fg: 'cyan' }},
+      scrollable: true,
+      scrollbar: { bg: 'blue' },
+      tags: true
+    });
+
+    screen.key(['q', 'C-c', 'escape'], () => {
+      if (!isShuttingDown) gracefulShutdown();
+    });
+
+    screen.on('render', () => console.log(chalk.green('Screen rendered successfully')));
+    screen.on('error', (err) => console.error(chalk.red('Screen error:'), err));
+    screen.render();
+    console.log(chalk.green('UI initialized successfully'));
+  } catch (err) {
+    console.error(chalk.red('UI initialization failed:'), err.message);
+    process.exit(1);
+  }
+}
+
+// ====== Dashboard Refresh ======
+function updateDashboard() {
+  if (!screen) {
+    console.log(chalk.yellow('No screen available for update'));
+    return;
+  }
+
+  console.log(chalk.blue('Updating dashboard...'));
+  statusBox.setContent(
+    `Success: ${success}\nFailed: ${failed}`
+  );
+  screen.render();
+}
+
+// ====== Shutdown Handler ======
+function gracefulShutdown(code = 0) {
+  if (isShuttingDown) return;
+  isShuttingDown = true;
+
+  console.log(chalk.blue('Initiating shutdown with code:', code));
+  try {
+    if (screen) {
+      screen.program.clear();
+      screen.program.disableMouse();
+      screen.program.showCursor();
+      screen.program.normalBuffer();
+      screen.destroy();
+      console.log(chalk.green('Screen destroyed'));
+    }
+    process.stdout.write('\n');
+  } catch (e) {
+    console.error('Shutdown error:', e.message);
+  } finally {
+    console.log(chalk.green('Process exiting with code:', code));
+    process.exit(code);
+  }
+}
+
+// ====== Process One Wallet ======
 async function processWallet(pk, index) {
   const wallet = new ethers.Wallet(pk, provider);
-  const address = wallet.address;
+  const address = await wallet.getAddress();
+  const spinner = ora(`Processing ${address}`).start();
+  const now = new Date().toLocaleString();
 
   try {
     const balance = await provider.getBalance(address);
     const balanceEth = ethers.formatEther(balance);
-    const minBalanceWei = ethers.parseEther(CONFIG.minBalance);
+    const minBalanceWei = ethers.parseEther(config.minBalance);
 
     if (balance < minBalanceWei) {
-      stats.skipped++;
-      logBox.log(chalk.yellow(`⚠ ${address.slice(0, 8)}... - Low balance (${balanceEth} ETH)`));
-      updateTable(address, balanceEth, 'Skipped');
+      skipped++;
+      logBox.log(`{yellow-fg}⚠ ${now} | ${address} - Low balance (${balanceEth} ETH){/}`);
+      updateDashboard();
+      spinner.warn('Skipped');
       return;
     }
 
     const feeData = await provider.getFeeData();
-    const gasEstimate = 21000n;
-    const gasCost = (gasEstimate * feeData.maxFeePerGas * CONFIG.gasBuffer * 100n) / 100n;
+    const gasLimit = 21000n;
+    const gasCost = (gasLimit * (feeData.maxFeePerGas || feeData.gasPrice)) * BigInt(Math.floor(config.gasBuffer * 100)) / 100n;
     const amount = balance - gasCost;
 
     if (amount <= 0n) {
-      stats.skipped++;
-      logBox.log(chalk.yellow(`⚠ ${address.slice(0, 8)}... - Insufficient after gas`));
-      updateTable(address, balanceEth, 'Skipped');
+      skipped++;
+      logBox.log(`{yellow-fg}⚠ ${now} | ${address} - Insufficient after gas{/}`);
+      updateDashboard();
+      spinner.warn('Too low after gas');
       return;
     }
 
     const tx = await wallet.sendTransaction({
       to: targetAddress,
       value: amount,
+      gasLimit,
       maxFeePerGas: feeData.maxFeePerGas,
-      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas,
-      gasLimit: gasEstimate
+      maxPriorityFeePerGas: feeData.maxPriorityFeePerGas
     });
 
     const receipt = await tx.wait();
     const amountEth = ethers.formatEther(amount);
 
     if (receipt.status === 1) {
-      stats.success++;
-      stats.totalETH += parseFloat(amountEth);
-      logBox.log(chalk.green(`✓ ${address.slice(0, 8)}... - Sent ${amountEth} ETH`));
-      updateTable(address, amountEth, 'Success', tx.hash);
+      success++;
+      logBox.log(`{green-fg}✔ ${now} | ${amountEth} ETH sent to ${targetAddress} | ${tx.hash}{/}`);
+      updateDashboard();
+      spinner.succeed(`Sent ${amountEth} ETH`);
     } else {
       throw new Error('Transaction reverted');
     }
   } catch (err) {
-    stats.failed++;
-    logBox.log(chalk.red(`✗ ${address.slice(0, 8)}... - ${err.message.split('\n')[0]}`));
-    updateTable(address, '-', 'Failed');
-  } finally {
+    failed++;
+    logBox.log(`{red-fg}✖ ${now} | ${address} | Error: ${err.message}{/}`);
     updateDashboard();
+    spinner.fail(err.message.slice(0, 50));
   }
 }
 
-function updateTable(address, amount, status, txHash = '-') {
-  const now = new Date().toLocaleTimeString();
-  const currentData = table.getData();
-  const newRow = [
-    address.slice(0, 6) + '...' + address.slice(-4),
-    amount,
-    status,
-    txHash === '-' ? '-' : txHash.slice(0, 8) + '...',
-    now
-  ];
-
-  table.setData({
-    headers: ['Address', 'Amount', 'Status', 'Tx Hash', 'Time'],
-    data: [...(currentData.data || []), newRow]
-  });
-}
-
-function updateDashboard() {
-  const total = stats.success + stats.failed + stats.skipped;
-  donut.setData([
-    { label: 'Success', percent: total ? (stats.success / total) * 100 : 0, color: 'green' },
-    { label: 'Failed', percent: total ? (stats.failed / total) * 100 : 0, color: 'red' },
-    { label: 'Skipped', percent: total ? (stats.skipped / total) * 100 : 0, color: 'yellow' }
-  ]);
-  screen.render();
-}
-
-function gracefulShutdown() {
-  screen.destroy();
-  process.exit(0);
-}
-
-// ===== Main Execution =====
+// ====== Main ======
 async function main() {
-  // UI Event Handlers
-  screen.key(['q', 'escape', 'C-c'], gracefulShutdown);
-  screen.key(['up', 'down'], (ch, key) => {
-    if (key.name === 'up') logBox.scroll(-1);
-    if (key.name === 'down') logBox.scroll(1);
-    screen.render();
-  });
-
-  // Initialization
-  if (!initialize()) {
-    setTimeout(gracefulShutdown, 3000);
+  console.log(chalk.blue('Starting main execution...'));
+  if (!loadFiles()) {
+    gracefulShutdown(1);
     return;
   }
+
+  provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  try {
+    console.log(chalk.blue('Step 3: Connecting to RPC...'));
+    await provider.ready;
+    console.log(chalk.green('RPC connected'));
+  } catch (err) {
+    console.error(chalk.red('RPC connection failed:'), err.message);
+    gracefulShutdown(1);
+    return;
+  }
+
+  console.log(chalk.cyan(figlet.textSync('MEGA ETH')));
+  console.log(chalk.green(`🚀 Consolidating to ${targetAddress}`));
+  console.log(`🔑 Wallets: ${privateKeys.length}\n`);
+
+  initUI();
 
   try {
-    provider = new ethers.JsonRpcProvider(CONFIG.rpcUrl);
-    await provider.ready;
-    logBox.log(chalk.green(`✓ Connected to ${CONFIG.rpcUrl}`));
+    console.log(chalk.blue('Step 4: Starting wallet processing...'));
+    for (let i = 0; i < privateKeys.length; i++) {
+      console.log(chalk.blue(`Processing wallet ${i + 1}/${privateKeys.length}`));
+      await processWallet(privateKeys[i], i);
+    }
+
+    logBox.log('{green-fg}\n✨ All transactions completed!{/}');
+    // Do not call gracefulShutdown or exit here; let the screen persist
   } catch (err) {
-    logBox.log(chalk.red(`❌ RPC connection failed: ${err.message}`));
-    setTimeout(gracefulShutdown, 3000);
-    return;
+    console.error(chalk.red('Processing error:'), err.message);
+    gracefulShutdown(1);
   }
-
-  // Process wallets
-  for (let i = 0; i < privateKeys.length; i++) {
-    await processWallet(privateKeys[i], i);
-  }
-
-  // Final status
-  logBox.log(chalk.green.bold('\n✨ All transactions completed!'));
-  logBox.log(chalk.cyan(`💰 Total ETH Sent: ${stats.totalETH.toFixed(6)}`));
-  logBox.log(chalk.cyan('Press Q or ESC to exit'));
 }
 
-// Start
-main().catch(err => {
-  logBox.log(chalk.red(`⚠ Fatal error: ${err.message}`));
-  setTimeout(gracefulShutdown, 3000);
+// ====== Global Error Handling ======
+process.on('uncaughtException', err => {
+  console.error('Uncaught Exception:', err);
+  if (!isShuttingDown) gracefulShutdown(1);
+});
+
+process.on('unhandledRejection', reason => {
+  console.error('Unhandled Rejection:', reason);
+  if (!isShuttingDown) gracefulShutdown(1);
+});
+
+process.on('SIGTERM', () => gracefulShutdown(0));
+process.on('SIGINT', () => gracefulShutdown(0));
+
+// ====== Start ======
+console.log(chalk.blue('Script starting...'));
+main();
+
+// Keep the event loop running to maintain the UI
+screen && screen.on('idle', () => {
+  screen.render();
 });
