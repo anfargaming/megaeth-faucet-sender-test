@@ -1,5 +1,6 @@
 {
   "name": "megaeth-faucet-sender-test",
+  "type": "module"  
   "version": "1.0.0",
   "description": "Terminal UI for sending Ethereum transactions with style",
   "main": "index.js",
