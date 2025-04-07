@@ -7,9 +7,12 @@ import contrib from "blessed-contrib";
 class ETHConsolidator {
   constructor() {
     this.RPC_ENDPOINTS = [
-      "https://carrot.megaeth.com/rpc"
+      "https://carrot.megaeth.com/rpc",
+      "https://rpc.testnet.megaeth.com",
+      "https://testnet.megaeth.io/rpc"
     ];
     this.CHAIN_ID = 6342;
+    this.MIN_BALANCE = 0.0003; // updated threshold
     this.TX_DELAY_MS = 1000;
     this.successCount = 0;
     this.failCount = 0;
@@ -22,20 +25,20 @@ class ETHConsolidator {
     this.screen = blessed.screen({ smartCSR: true });
     this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
 
-    this.logBox = this.grid.set(0, 0, 8, 8, contrib.log, {
+    this.logBox = this.grid.set(0, 0, 6, 9, contrib.log, {
       label: " Transaction Logs ",
       border: { type: "line", fg: "cyan" },
       scrollbar: { style: { bg: "blue" } },
     });
 
-    this.walletTable = this.grid.set(8, 0, 4, 8, contrib.table, {
+    this.walletTable = this.grid.set(6, 0, 6, 9, contrib.table, {
       label: " Wallet Status ",
       columnWidth: [20, 12, 12, 12, 12, 34],
       columnSpacing: 2,
       border: { type: "line", fg: "cyan" },
     });
 
-    this.statusBox = this.grid.set(0, 8, 12, 4, blessed.box, {
+    this.statusBox = this.grid.set(0, 9, 12, 3, blessed.box, {
       label: " Final Status ",
       border: { type: "line", fg: "cyan" },
       tags: true,
@@ -86,8 +89,7 @@ class ETHConsolidator {
       `{bold}Total Success:{/bold} ${this.successCount}\n` +
       `{bold}Total Failed:{/bold} ${this.failCount}\n` +
       `{bold}Total Skipped:{/bold} ${this.skippedCount}\n` +
-      `{bold}Final Status:{/bold} ${total === this.privateKeys?.length ? "Completed" : "Processing..."}\n\n` +
-      `Press {bold}q{/bold} or {bold}Ctrl+C{/bold} to exit`
+      `{bold}Final Status:{/bold} ${total === this.privateKeys?.length ? "Completed" : "Processing..."}`
     );
     this.screen.render();
   }
@@ -124,7 +126,7 @@ class ETHConsolidator {
 
   async getBalance(address) {
     const balance = await this.provider.getBalance(address);
-    return balance;
+    return parseFloat(ethers.formatEther(balance));
   }
 
   async processWallet(privateKey, index) {
@@ -135,42 +137,24 @@ class ETHConsolidator {
 
     try {
       const balance = await this.getBalance(address);
-      this.log(`  Current Balance: ${ethers.formatEther(balance)} ETH`);
+      this.log(`  Current Balance: ${balance.toFixed(6)} ETH`);
 
-      if (balance <= 0n) {
-        this.log(`  Skipping - balance is zero`);
+      if (balance <= this.MIN_BALANCE) {
+        this.log(`  Skipping - balance below ${this.MIN_BALANCE} ETH threshold`);
         this.skippedCount++;
-        this.updateTable(address, "0.000000", "0.000000", "Skipped", "0.000000", "Zero balance");
+        this.updateTable(address, balance.toFixed(6), "0.000000", "Skipped", balance.toFixed(6), "Low balance");
         return;
       }
 
-      const txRequest = {
-        to: this.targetAddress,
-        value: balance,
-        gasLimit: 21000,
-        chainId: this.CHAIN_ID,
-        type: 2,
-      };
-
-      const populated = await wallet.populateTransaction(txRequest);
-      const estimatedGasFee = (populated.maxFeePerGas + populated.maxPriorityFeePerGas) * 21000n;
-
-      const sendable = balance - estimatedGasFee;
-      if (sendable <= 0n) {
-        this.log(`  Not enough to cover gas. Needed: ${ethers.formatEther(estimatedGasFee)} ETH`);
-        this.skippedCount++;
-        this.updateTable(address, ethers.formatEther(balance), "0.000000", "Skipped", ethers.formatEther(balance), "Not enough gas");
-        return;
-      }
+      const sendAmount = balance - this.MIN_BALANCE;
+      this.log(`  Sending: ${sendAmount.toFixed(6)} ETH`);
 
       const tx = await wallet.sendTransaction({
         to: this.targetAddress,
-        value: sendable,
+        value: ethers.parseEther(sendAmount.toFixed(6)),
+        gasLimit: 21000,
         chainId: this.CHAIN_ID,
         type: 2,
-        gasLimit: 21000,
-        maxFeePerGas: populated.maxFeePerGas,
-        maxPriorityFeePerGas: populated.maxPriorityFeePerGas,
       });
 
       this.log(`  TX Hash: ${tx.hash}`);
@@ -183,16 +167,24 @@ class ETHConsolidator {
       this.successCount++;
       this.updateTable(
         address,
-        ethers.formatEther(balance),
-        ethers.formatEther(sendable),
+        balance.toFixed(6),
+        sendAmount.toFixed(6),
         "Success",
-        ethers.formatEther(balance - sendable),
+        this.MIN_BALANCE.toFixed(6),
         `🔗 ${explorer}`
       );
     } catch (err) {
       this.failCount++;
-      this.log(`  ❌ Error: ${err.message}`);
-      this.updateTable(address, "??", "0.000000", "Failed", "??", err.message.slice(0, 30));
+      const bal = await this.getBalance(address).catch(() => 0);
+      this.log(`  Error: ${err.message}`);
+      this.updateTable(
+        address,
+        bal.toFixed(6),
+        "0.000000",
+        "Failed",
+        bal.toFixed(6),
+        err.message.split("\n")[0].slice(0, 30) + "..."
+      );
     }
   }
 
@@ -216,6 +208,7 @@ class ETHConsolidator {
       this.log(`\n❌ Fatal Error: ${err.message}`);
     } finally {
       this.updateStatusBox();
+      this.log("\nPress 'q' or Ctrl+C to exit");
     }
   }
 }
