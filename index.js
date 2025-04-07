@@ -48,14 +48,12 @@ const logBox = grid.set(0, 0, 6, 6, contrib.log, {
   selectedFg: "green"
 });
 
-const donut = grid.set(0, 6, 6, 6, blessed.box, {
+const donut = grid.set(0, 6, 6, 6, contrib.donut, {
   label: "Success / Failed",
-  tags: true,
-  content: '',
-  style: {
-    fg: 'green',
-    border: { fg: 'cyan' }
-  }
+  radius: 16,
+  arcWidth: 4,
+  yPadding: 2,
+  data: []
 });
 
 const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
@@ -66,7 +64,7 @@ const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
 });
 
 const exitInfo = grid.set(11, 0, 1, 12, blessed.box, {
-  content: "Press 'q' or Ctrl+C to exit. Status: Pending...",
+  content: "Press 'q' or Ctrl+C to exit.",
   style: { fg: 'cyan' }
 });
 
@@ -130,7 +128,7 @@ async function sendETH(privateKey, index) {
     data: tableData
   });
 
-  donut.setContent(`\n  Total Success: {green-fg}${success}{/green-fg}\n  Total Failed: {red-fg}${failed}{/red-fg}\n  Final Status: Completed`);
+  donut.setData([{ percent: 100, label: `✅ ${success}`, color: 'green' }, { percent: 100, label: `❌ ${failed}`, color: 'red' }, { percent: 100, label: `📦 Completed`, color: 'cyan' }]);
   screen.render();
 }
 
@@ -144,7 +142,7 @@ async function run() {
   logBox.log(`Total Failed: ${failed}`);
   logBox.log("Final Status: Completed");
 
-  exitInfo.setContent(`Press 'q' or Ctrl+C to exit. Final Status: Completed | ✅ ${success} | ❌ ${failed}`);
+  exitInfo.setContent("Press 'q' or Ctrl+C to exit.");
   screen.render();
 }
 
