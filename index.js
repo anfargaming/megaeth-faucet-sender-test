@@ -1,155 +1,138 @@
-// index.js (ES Module style)
-
+// index.js
 import { ethers } from "ethers";
+import "dotenv/config";
 import fs from "fs";
-import dotenv from "dotenv";
 import chalk from "chalk";
 import blessed from "blessed";
 import contrib from "blessed-contrib";
-import path from "path";
-import { fileURLToPath } from "url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
-dotenv.config();
-
-const rpcEndpoints = [
+// === Config ===
+const rpcList = [
   "https://carrot.megaeth.com/rpc",
   "https://rpc.testnet.megaeth.com",
-  "https://testnet.megaeth.io/rpc",
+  "https://testnet.megaeth.io/rpc"
 ];
-
-let provider;
-
-async function connectProvider() {
-  for (const url of rpcEndpoints) {
-    try {
-      const tempProvider = new ethers.JsonRpcProvider(url);
-      await tempProvider.getBlockNumber();
-      console.log(chalk.green(`Connected to ${url}`));
-      provider = tempProvider;
-      return;
-    } catch (err) {
-      console.log(chalk.red(`Failed to connect to ${url}`));
-    }
-  }
-  throw new Error("Could not connect to any RPC endpoint");
-}
-
-const targetAddress = fs.readFileSync("target_address.txt", "utf8").trim();
-const privateKeys = fs
-  .readFileSync("private_keys.txt", "utf8")
-  .split("\n")
-  .map((k) => k.trim())
-  .filter(Boolean);
-
 const chainId = 6342;
-const maxFeePerGas = ethers.parseUnits("0.0025", "gwei");
-const maxPriorityFeePerGas = ethers.parseUnits("0.001", "gwei");
+const gasLimit = 21000;
+const maxFee = ethers.parseUnits("0.0025", "gwei");
+const maxPriorityFee = ethers.parseUnits("0.001", "gwei");
 
-// Terminal Dashboard Setup
+const privateKeys = fs.readFileSync("private_keys.txt", "utf-8").trim().split("\n");
+const targetAddress = fs.readFileSync("target_address.txt", "utf-8").trim();
+
+if (!ethers.isAddress(targetAddress)) throw new Error("Invalid target address");
+
+// === Terminal UI ===
 const screen = blessed.screen();
 const grid = new contrib.grid({ rows: 12, cols: 12, screen });
-const logBox = grid.set(0, 0, 6, 9, contrib.log, { label: "💬 Real-time Logs" });
-const donut = grid.set(0, 9, 6, 3, contrib.donut, {
-  label: "📊 Success/Fail Chart",
+
+const logBox = grid.set(0, 0, 6, 8, blessed.log, {
+  label: "Logs",
+  tags: true,
+  border: { type: "line" },
+  scrollable: true,
+});
+
+const donut = grid.set(0, 8, 6, 4, contrib.donut, {
+  label: "Success vs Failed",
   radius: 16,
   arcWidth: 4,
   yPadding: 2,
-  data: [],
+  data: [
+    { percent: 0, label: "Success", color: "green" },
+    { percent: 0, label: "Failed", color: "red" },
+  ],
 });
-const table = grid.set(6, 0, 6, 12, contrib.table, {
-  label: "📋 Wallet Status",
-  columnWidth: [42, 12, 10, 80],
+
+const walletTable = grid.set(6, 0, 6, 12, contrib.table, {
   keys: true,
-  interactive: false,
-  columnSpacing: 2,
-  columnAlign: ["left", "center", "center", "left"],
+  fg: "white",
+  label: "Wallet Summary",
+  columnWidth: [20, 14, 10, 46],
 });
 
-let success = 0,
-  fail = 0;
+screen.key(["escape", "q", "C-c"], () => process.exit(0));
+screen.render();
 
-function updateDonut() {
-  donut.setData([
-    { percent: (success / privateKeys.length) * 100 || 0, label: "Success", color: "green" },
-    { percent: (fail / privateKeys.length) * 100 || 0, label: "Fail", color: "red" },
-  ]);
-  screen.render();
-}
-
-async function getBalance(address) {
+// === RPC Fallback ===
+let provider;
+for (let rpc of rpcList) {
   try {
-    const balance = await provider.getBalance(address);
-    return parseFloat(ethers.formatEther(balance));
-  } catch (err) {
-    throw new Error("Error getting balance");
+    provider = new ethers.JsonRpcProvider(rpc);
+    await provider.getBlockNumber();
+    logBox.log(`{green-fg}Connected to:${rpc}{/}`);
+    break;
+  } catch (e) {
+    logBox.log(`{red-fg}Failed to connect:${rpc}{/}`);
   }
 }
+if (!provider) throw new Error("All RPC connections failed");
 
-async function sendETH(privateKey, index) {
-  const wallet = new ethers.Wallet(privateKey, provider);
-  const address = wallet.address;
-  logBox.log(`🔍 Processing ${address}`);
+// === Main Logic ===
+let success = 0;
+let failed = 0;
+let walletData = [];
 
+async function sendETH(pk, index) {
   try {
-    const balance = await getBalance(address);
-    if (balance <= 0.001) {
-      logBox.log(chalk.yellow(`💸 Skipped - Low Balance: ${balance.toFixed(6)} ETH`));
-      return false;
+    const wallet = new ethers.Wallet(pk, provider);
+    const address = await wallet.getAddress();
+    const balance = await provider.getBalance(address);
+    const ethBal = parseFloat(ethers.formatEther(balance));
+
+    logBox.log(`Wallet ${index + 1}: {cyan-fg}${address}{/}`);
+    logBox.log(`Balance: {yellow-fg}${ethBal}{/} ETH`);
+
+    if (ethBal <= 0.001) {
+      logBox.log(`{red-fg}Skipping - insufficient balance{/}`);
+      walletData.push([address, ethBal.toFixed(4), "❌ Skipped", "-"]);
+      failed++;
+      return;
     }
 
-    const amountToSend = balance - 0.001;
+    const amount = ethBal - 0.001;
+    const nonce = await provider.getTransactionCount(address);
+
     const tx = await wallet.sendTransaction({
       to: targetAddress,
-      value: ethers.parseEther(amountToSend.toFixed(18)),
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-      gasLimit: 21000,
+      value: ethers.parseEther(amount.toFixed(8)),
+      gasLimit,
+      maxFeePerGas: maxFee,
+      maxPriorityFeePerGas: maxPriorityFee,
+      nonce,
+      chainId,
+      type: 2,
     });
 
-    logBox.log(chalk.green(`🚀 Sent ${amountToSend.toFixed(6)} ETH | TX: ${tx.hash}`));
+    logBox.log(`{blue-fg}Sent TX:{/} https://megaexplorer.xyz/tx/${tx.hash}`);
     const receipt = await tx.wait();
-    logBox.log(chalk.cyan(`✅ Confirmed in block ${receipt.blockNumber}`));
-
-    table.rows.push([
-      address,
-      balance.toFixed(4),
-      "✅",
-      `https://megaexplorer.xyz/tx/${tx.hash}`,
-    ]);
+    logBox.log(`{green-fg}Confirmed in block ${receipt.blockNumber}{/}`);
     success++;
-    return true;
-  } catch (err) {
-    logBox.log(chalk.red(`❌ Error: ${err.message}`));
-    table.rows.push([address, "-", "❌", err.message]);
-    fail++;
-    return false;
-  } finally {
-    updateDonut();
-    table.setData({
-      headers: ["Address", "Balance", "Status", "Details"],
-      data: table.rows,
-    });
-    screen.render();
+    walletData.push([address, ethBal.toFixed(4), "✅ Success", tx.hash]);
+  } catch (e) {
+    logBox.log(`{red-fg}Error:${e.message}{/}`);
+    failed++;
+    walletData.push(["--", "--", "❌ Failed", "--"]);
   }
+
+  donut.setData([
+    { percent: (success / privateKeys.length) * 100, label: "Success", color: "green" },
+    { percent: (failed / privateKeys.length) * 100, label: "Failed", color: "red" },
+  ]);
+  walletTable.setData({
+    headers: ["Wallet", "Balance (ETH)", "Status", "TX Hash"],
+    data: walletData,
+  });
+  screen.render();
 }
 
 async function run() {
-  await connectProvider();
-  logBox.log(`📡 Consolidating ${privateKeys.length} wallets to ${targetAddress}`);
-  screen.render();
-
+  logBox.log(`{bold}Target Address:{/} ${targetAddress}`);
   for (let i = 0; i < privateKeys.length; i++) {
     await sendETH(privateKeys[i], i);
-    await new Promise((r) => setTimeout(r, 1000));
   }
-
-  logBox.log(chalk.bold.green("🎉 All wallets processed!"));
+  logBox.log(`\n{bold}Done!{/}`);
   screen.render();
 }
 
 run();
-
-screen.key(["escape", "q", "C-c"], () => process.exit(0));
