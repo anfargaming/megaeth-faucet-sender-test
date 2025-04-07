@@ -35,7 +35,7 @@ class MegaEthSender:
     def _connect_to_provider(self):
         for endpoint in self.rpc_endpoints:
             try:
-                w3 = Web3(Web3.HTTPProvider(endpoint))  # Fixed typo: WebWeb to Web3
+                w3 = Web3(Web3.HTTPProvider(endpoint))
                 if w3.is_connected():
                     self.ui_callback(f"Connected to {endpoint}", "success")
                     return w3
@@ -116,7 +116,7 @@ class MegaEthSenderUI:
         self.successful = 0
         self.failed = 0
         self.eth_sent = 0.0
-        self.logs = []  # Initialize logs as an empty list
+        self.logs = []  # Ensure logs is initialized here
 
     def update_console(self, message, msg_type="info"):
         timestamp = time.strftime("%H:%M:%S")
