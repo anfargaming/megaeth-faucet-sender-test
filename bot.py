@@ -24,13 +24,24 @@ class MegaEthSenderGUI:
         
         # Initialize sender
         self.sender = MegaEthSender(self.update_ui_callback)
-        
+
+    def add_hover_effect(self, widget, hover_bg, normal_bg):
+        def on_enter(e): widget.config(bg=hover_bg)
+        def on_leave(e): widget.config(bg=normal_bg)
+        widget.bind("<Enter>", on_enter)
+        widget.bind("<Leave>", on_leave)
+
+    def animate_status_label(self):
+        colors = ["#3498db", "#2980b9", "#3498db"]
+        def pulse(index=0):
+            self.status_label.config(bg=colors[index % len(colors)])
+            self.root.after(1000, pulse, index + 1)
+        pulse()
+
     def setup_ui(self):
-        # Header Frame
         header_frame = tk.Frame(self.root, bg="#3498db", height=100)
         header_frame.pack(fill="x", padx=10, pady=10)
         
-        # Logo and Title
         try:
             img = Image.open("logo.png").resize((80, 80))
             self.logo = ImageTk.PhotoImage(img)
@@ -44,7 +55,6 @@ class MegaEthSenderGUI:
                         fg="white", bg="#3498db")
         title.pack(side="left", pady=20)
         
-        # Network Info Frame
         info_frame = tk.Frame(self.root, bg="#34495e", padx=10, pady=10)
         info_frame.pack(fill="x", padx=10, pady=5)
         
@@ -55,7 +65,6 @@ class MegaEthSenderGUI:
                                     fg="#2ecc71", bg="#34495e")
         self.network_label.pack(side="left", padx=5)
         
-        # Progress Frame
         progress_frame = tk.Frame(self.root, bg="#2c3e50")
         progress_frame.pack(fill="x", padx=10, pady=10)
         
@@ -67,8 +76,9 @@ class MegaEthSenderGUI:
                                    font=("Helvetica", 10), 
                                    fg="white", bg="#2c3e50")
         self.status_label.pack(side="left", padx=10)
+
+        self.animate_status_label()
         
-        # Console Output
         console_frame = tk.Frame(self.root, bg="#2c3e50")
         console_frame.pack(fill="both", expand=True, padx=10, pady=5)
         
@@ -81,7 +91,6 @@ class MegaEthSenderGUI:
                                                 insertbackground="white")
         self.console.pack(fill="both", expand=True)
         
-        # Action Buttons
         button_frame = tk.Frame(self.root, bg="#2c3e50")
         button_frame.pack(fill="x", padx=10, pady=10)
         
@@ -92,15 +101,17 @@ class MegaEthSenderGUI:
                                   activebackground="#2ecc71",
                                   activeforeground="white")
         self.start_btn.pack(side="left", padx=5)
+        self.add_hover_effect(self.start_btn, "#2ecc71", "#27ae60")
         
-        tk.Button(button_frame, text="Clear Console", 
-                 command=self.clear_console,
-                 font=("Helvetica", 12),
-                 bg="#e74c3c", fg="white",
-                 activebackground="#c0392b",
-                 activeforeground="white").pack(side="left", padx=5)
+        clear_btn = tk.Button(button_frame, text="Clear Console", 
+                              command=self.clear_console,
+                              font=("Helvetica", 12),
+                              bg="#e74c3c", fg="white",
+                              activebackground="#c0392b",
+                              activeforeground="white")
+        clear_btn.pack(side="left", padx=5)
+        self.add_hover_effect(clear_btn, "#ff6f61", "#e74c3c")
         
-        # Stats Frame
         stats_frame = tk.Frame(self.root, bg="#34495e", padx=10, pady=10)
         stats_frame.pack(fill="x", padx=10, pady=5)
         
@@ -119,14 +130,21 @@ class MegaEthSenderGUI:
             tk.Label(frame, text=text, font=("Helvetica", 10), 
                     fg="white", bg="#34495e").pack()
             
-            setattr(self, var_name, tk.Label(frame, text="0", 
-                                            font=("Helvetica", 12, "bold"), 
-                                            fg="#f39c12", bg="#34495e"))
-            getattr(self, var_name).pack()
-    
+            label = tk.Label(frame, text="0", 
+                            font=("Helvetica", 12, "bold"), 
+                            fg="#f1c40f", bg="#34495e")
+            label.pack()
+            setattr(self, var_name, label)
+            
+            def pulse(lbl=label):
+                current = lbl.cget("fg")
+                lbl.config(fg="#f39c12" if current == "#f1c40f" else "#f1c40f")
+                self.root.after(700, pulse)
+            pulse()
+
     def update_ui_callback(self, message, msg_type="info"):
         self.root.after(0, self.update_console, message, msg_type)
-        
+
     def update_console(self, message, msg_type="info"):
         color_map = {
             "success": "#2ecc71",
@@ -134,19 +152,26 @@ class MegaEthSenderGUI:
             "warning": "#f39c12",
             "info": "#3498db"
         }
-        
         self.console.tag_config(msg_type, foreground=color_map.get(msg_type, "#ecf0f1"))
-        self.console.insert("end", message + "\n", msg_type)
-        self.console.see("end")
-        self.root.update()
-    
+
+        def type_text(index=0):
+            if index < len(message):
+                self.console.insert("end", message[index], msg_type)
+                self.console.see("end")
+                self.console.after(10, type_text, index + 1)
+            else:
+                self.console.insert("end", "\n", msg_type)
+        type_text()
+
     def clear_console(self):
         self.console.delete(1.0, "end")
-    
+
     def start_sending(self):
         self.start_btn.config(state="disabled")
+        self.progress.config(mode="indeterminate")
+        self.progress.start(10)
         threading.Thread(target=self.run_sender, daemon=True).start()
-    
+
     def run_sender(self):
         try:
             self.update_console("\n=== Starting ETH Sending Process ===\n", "info")
@@ -155,6 +180,8 @@ class MegaEthSenderGUI:
             self.update_console(f"\nFatal error: {str(e)}\n", "error")
         finally:
             self.start_btn.config(state="normal")
+            self.progress.stop()
+            self.progress.config(mode="determinate", value=100)
 
 class MegaEthSender:
     def __init__(self, ui_callback):
@@ -168,7 +195,6 @@ class MegaEthSender:
         self.target_address = self._load_target_address()
         self.private_keys = self._load_private_keys()
         
-        # Stats
         self.total_wallets = len(self.private_keys)
         self.processed = 0
         self.successful = 0
@@ -209,7 +235,6 @@ class MegaEthSender:
         address = account.address
         
         try:
-            # Get balance
             balance_wei = self.w3.eth.get_balance(address)
             balance_eth = float(Web3.from_wei(balance_wei, 'ether'))
             
@@ -217,7 +242,6 @@ class MegaEthSender:
                 self.ui_callback(f"{address[:8]}...{address[-6:]} - Zero balance", "warning")
                 return None
             
-            # Calculate transfer amount
             gas_cost = float(Web3.from_wei(21000 * self.max_fee_per_gas, 'ether'))
             amount_to_send = max(balance_eth - gas_cost, 0)
             
@@ -225,7 +249,6 @@ class MegaEthSender:
                 self.ui_callback(f"{address[:8]}...{address[-6:]} - Insufficient balance", "warning")
                 return None
             
-            # Prepare transaction
             tx = {
                 'nonce': self.w3.eth.get_transaction_count(address),
                 'to': self.target_address,
@@ -237,15 +260,12 @@ class MegaEthSender:
                 'type': '0x2'
             }
             
-            # Send transaction
             signed_tx = self.w3.eth.account.sign_transaction(tx, private_key)
             tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
             receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
             
-            # Update stats
             self.eth_sent += amount_to_send
             
-            # Log transaction
             with open('transactions.csv', 'a', newline='') as f:
                 writer = csv.writer(f)
                 writer.writerow([address, balance_eth, amount_to_send, tx_hash.hex()])
@@ -261,22 +281,17 @@ class MegaEthSender:
 
     def run(self):
         start_time = time.time()
-        
-        # Initialize CSV
         with open('transactions.csv', 'w', newline='') as f:
             writer = csv.writer(f)
             writer.writerow(['Address', 'Balance', 'Amount Sent', 'TxHash'])
         
-        # Process wallets
         with ThreadPoolExecutor(max_workers=5) as executor:
             results = list(executor.map(self.transfer_eth, self.private_keys))
         
-        # Calculate stats
         self.successful = sum(1 for result in results if result is not None)
         self.failed = len(self.private_keys) - self.successful
         elapsed = time.time() - start_time
         
-        # Final report
         self.ui_callback("\n=== Transaction Summary ===", "info")
         self.ui_callback(f"Total Wallets: {len(self.private_keys)}", "info")
         self.ui_callback(f"Successful: {self.successful}", "success")
