@@ -1,14 +1,20 @@
-import customtkinter as ctk
-import tkinter as tk
-from tkinter import scrolledtext
-from PIL import Image, ImageTk
-import time
-import threading
 import os
+import time
+import csv
+import threading
 from dotenv import load_dotenv
 from web3 import Web3
-import csv
 from concurrent.futures import ThreadPoolExecutor
+
+# Try to import UI libraries (GUI mode)
+try:
+    import customtkinter as ctk
+    import tkinter as tk
+    from tkinter import scrolledtext
+    from PIL import Image, ImageTk
+    GUI_AVAILABLE = True
+except:
+    GUI_AVAILABLE = False
 
 load_dotenv()
 
@@ -104,54 +110,69 @@ class MegaEthSender:
         self.ui_callback(f"ETH Sent: {self.eth_sent:.6f}", "info")
         self.ui_callback(f"Time: {time.time() - start:.2f} sec", "info")
 
-class MegaEthApp(ctk.CTk):
-    def __init__(self):
-        super().__init__()
-        self.title("💸 Mega ETH Sender Dashboard")
-        self.geometry("920x720")
-        ctk.set_appearance_mode("dark")
-        ctk.set_default_color_theme("green")
+if GUI_AVAILABLE:
+    class MegaEthApp(ctk.CTk):
+        def __init__(self):
+            super().__init__()
+            self.title("💸 Mega ETH Sender Dashboard")
+            self.geometry("920x720")
+            ctk.set_appearance_mode("dark")
+            ctk.set_default_color_theme("green")
 
-        self.sender = MegaEthSender(self.log)
+            self.sender = MegaEthSender(self.log)
 
-        self.main_frame = ctk.CTkFrame(self)
-        self.main_frame.pack(padx=20, pady=20, fill="both", expand=True)
+            self.main_frame = ctk.CTkFrame(self)
+            self.main_frame.pack(padx=20, pady=20, fill="both", expand=True)
 
-        self.title_lbl = ctk.CTkLabel(self.main_frame, text="💸 Mega ETH Sender Pro", font=("Helvetica", 28, "bold"))
-        self.title_lbl.pack(pady=(10, 20))
+            self.title_lbl = ctk.CTkLabel(self.main_frame, text="💸 Mega ETH Sender Pro", font=("Helvetica", 28, "bold"))
+            self.title_lbl.pack(pady=(10, 20))
 
-        self.start_btn = ctk.CTkButton(self.main_frame, text="🚀 Start Sending", command=self.start_sending, font=("Helvetica", 18))
-        self.start_btn.pack(pady=(10, 10))
+            self.start_btn = ctk.CTkButton(self.main_frame, text="🚀 Start Sending", command=self.start_sending, font=("Helvetica", 18))
+            self.start_btn.pack(pady=(10, 10))
 
-        self.console = ctk.CTkTextbox(self.main_frame, height=400)
-        self.console.pack(padx=10, pady=10, fill="both", expand=True)
+            self.console = ctk.CTkTextbox(self.main_frame, height=400)
+            self.console.pack(padx=10, pady=10, fill="both", expand=True)
 
-        self.footer = ctk.CTkLabel(self.main_frame, text="© 2025 MegaETH Team | All Rights Reserved", font=("Arial", 10))
-        self.footer.pack(pady=5)
+            self.footer = ctk.CTkLabel(self.main_frame, text="© 2025 MegaETH Team | All Rights Reserved", font=("Arial", 10))
+            self.footer.pack(pady=5)
 
-    def log(self, message, level="info"):
+        def log(self, message, level="info"):
+            prefix = {
+                "success": "[✓]",
+                "error": "[✗]",
+                "warning": "[!]",
+                "info": "[i]"
+            }.get(level, "[i]")
+            self.console.insert("end", f"{prefix} {message}\n")
+            self.console.see("end")
+
+        def start_sending(self):
+            self.start_btn.configure(state="disabled")
+            threading.Thread(target=self.run_sender, daemon=True).start()
+
+        def run_sender(self):
+            try:
+                self.log("\n=== MEGA ETH Sender Pro Running ===", "info")
+                self.sender.run()
+            except Exception as e:
+                self.log(f"Fatal Error: {str(e)}", "error")
+            finally:
+                self.start_btn.configure(state="normal")
+
+    if __name__ == "__main__":
+        app = MegaEthApp()
+        app.mainloop()
+else:
+    def console_log(message, level="info"):
         prefix = {
             "success": "[✓]",
             "error": "[✗]",
             "warning": "[!]",
             "info": "[i]"
         }.get(level, "[i]")
-        self.console.insert("end", f"{prefix} {message}\n")
-        self.console.see("end")
+        print(f"{prefix} {message}")
 
-    def start_sending(self):
-        self.start_btn.configure(state="disabled")
-        threading.Thread(target=self.run_sender, daemon=True).start()
-
-    def run_sender(self):
-        try:
-            self.log("\n=== MEGA ETH Sender Pro Running ===", "info")
-            self.sender.run()
-        except Exception as e:
-            self.log(f"Fatal Error: {str(e)}", "error")
-        finally:
-            self.start_btn.configure(state="normal")
-
-if __name__ == "__main__":
-    app = MegaEthApp()
-    app.mainloop()
+    if __name__ == "__main__":
+        print("\n=== MEGA ETH Sender Pro [CLI MODE] ===")
+        sender = MegaEthSender(console_log)
+        sender.run()
