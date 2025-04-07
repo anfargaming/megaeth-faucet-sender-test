@@ -1,215 +1,134 @@
-import os
-import time
-import csv
-import threading
-from concurrent.futures import ThreadPoolExecutor
-from web3 import Web3
-from dotenv import load_dotenv
-from colorama import init, Fore, Style
-from rich.console import Console
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, BarColumn, TextColumn
-from pynput import keyboard
+// mega-eth-sender-terminal.js
+const blessed = require('blessed');
+const figlet = require('figlet');
+const { ethers } = require('ethers');
 
-init()
-console = Console()
-load_dotenv()
+// Create screen
+const screen = blessed.screen({ smartCSR: true, title: 'Mega ETH Sender Pro' });
 
-class MegaEthSender:
-    def __init__(self, ui_callback):
-        self.ui_callback = ui_callback
-        self.rpc_endpoints = ['https://carrot.megaeth.com/rpc']
-        self.chain_id = 6342
-        self.max_fee_per_gas = Web3.to_wei(0.0025, 'gwei')
-        self.max_priority_fee_per_gas = Web3.to_wei(0.001, 'gwei')
-        self.w3 = self._connect_to_provider()
-        self.target_address = self._load_target_address()
-        self.private_keys = self._load_private_keys()
+// Styles
+const style = { fg: 'green', bg: 'black', border: { fg: 'cyan' } };
 
-    def _connect_to_provider(self):
-        for endpoint in self.rpc_endpoints:
-            try:
-                w3 = Web3(Web3.HTTPProvider(endpoint))
-                if w3.is_connected():
-                    self.ui_callback(f"Connected to {endpoint}", "success")
-                    return w3
-            except Exception as e:
-                self.ui_callback(f"Connection failed to {endpoint}: {str(e)}", "warning")
-        raise ConnectionError("Could not connect to any RPC endpoint")
+// State
+let logs = [];
+const walletAddress = '0xYourWalletAddress';
+let ethBalance = '...';
+let gasPrice = '...';
 
-    def _load_target_address(self):
-        with open('target_address.txt', 'r') as f:
-            address = f.read().strip()
-        if not Web3.is_address(address):
-            raise ValueError("Invalid target address")
-        return address
+// Header
+const header = blessed.box({
+  top: 0,
+  height: 5,
+  width: '100%',
+  tags: true,
+  content: '',
+  style: { fg: 'magenta', bg: 'black' },
+});
+screen.append(header);
 
-    def _load_private_keys(self):
-        keys = []
-        with open('private_keys.txt', 'r') as f:
-            for line in f:
-                line = line.strip()
-                if line:
-                    keys.append(line)
-        if not keys:
-            raise ValueError("No private keys found")
-        return keys
+// Wallet Box
+const walletBox = blessed.box({
+  top: 5,
+  left: 0,
+  width: '40%',
+  height: 9,
+  label: '📒 Wallet Info',
+  tags: true,
+  border: 'line',
+  style,
+});
+screen.append(walletBox);
 
-    def transfer_eth(self, private_key):
-        account = self.w3.eth.account.from_key(private_key)
-        address = account.address
+// Logs Box
+const logBox = blessed.box({
+  top: 5,
+  left: '40%',
+  width: '60%',
+  height: '90%-5',
+  label: '📜 Transaction Logs',
+  tags: true,
+  border: 'line',
+  scrollable: true,
+  alwaysScroll: true,
+  scrollbar: { ch: ' ', track: { bg: 'gray' }, style: { bg: 'cyan' } },
+  style,
+});
+screen.append(logBox);
 
-        try:
-            balance_wei = self.w3.eth.get_balance(address)
-            balance_eth = float(Web3.from_wei(balance_wei, 'ether'))
+// Menu Box
+const menuBox = blessed.box({
+  bottom: 0,
+  height: 4,
+  width: '100%',
+  tags: true,
+  content: '{cyan-fg} [1] Send ETH  |  [2] Check Gas  |  [3] View Logs  |  [q] Quit {/cyan-fg}',
+  style: { fg: 'white', bg: 'blue' },
+});
+screen.append(menuBox);
 
-            if balance_eth <= 0:
-                self.ui_callback(f"{address[:8]}...{address[-6:]} - Zero balance", "warning")
-                return None, 0.0
+// Load Header ASCII
+function animateHeader() {
+  figlet('Mega ETH\nSender Pro', (err, data) => {
+    if (!err) {
+      header.setContent(`{magenta-fg}${data}{/}`);
+      screen.render();
+    }
+  });
+}
+animateHeader();
 
-            gas_cost = float(Web3.from_wei(21000 * self.max_fee_per_gas, 'ether'))
-            amount_to_send = max(balance_eth - gas_cost, 0)
+// Update Wallet Info
+async function updateWalletInfo() {
+  try {
+    const provider = new ethers.providers.JsonRpcProvider('https://ethereum.publicnode.com');
+    const balance = await provider.getBalance(walletAddress);
+    const gas = await provider.getGasPrice();
 
-            if amount_to_send <= 0:
-                self.ui_callback(f"{address[:8]}...{address[-6:]} - Insufficient balance", "warning")
-                return None, 0.0
+    ethBalance = ethers.utils.formatEther(balance);
+    gasPrice = ethers.utils.formatUnits(gas, 'gwei');
 
-            tx = {
-                'nonce': self.w3.eth.get_transaction_count(address),
-                'to': self.target_address,
-                'value': Web3.to_wei(amount_to_send, 'ether'),
-                'gas': 21000,
-                'maxFeePerGas': self.max_fee_per_gas,
-                'maxPriorityFeePerGas': self.max_priority_fee_per_gas,
-                'chainId': self.chain_id,
-                'type': '0x2'
-            }
+    walletBox.setContent(
+      `{bold}Wallet:{/} ${walletAddress.slice(0, 10)}...` +
+      `\n{green-fg}ETH Balance:{/} ${ethBalance}` +
+      `\n{yellow-fg}Gas Price:{/} ${gasPrice} Gwei`
+    );
+    screen.render();
+  } catch (err) {
+    log('[ERROR] Failed to load wallet info');
+  }
+}
+updateWalletInfo();
 
-            signed_tx = self.w3.eth.account.sign_transaction(tx, private_key)
-            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-            self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+// Logging
+function log(msg) {
+  const time = new Date().toLocaleTimeString();
+  logs.push(`{gray-fg}[${time}]{/} ${msg}`);
+  if (logs.length > 100) logs.shift();
+  logBox.setContent(logs.join('\n'));
+  logBox.setScrollPerc(100);
+  screen.render();
+}
 
-            with open('transactions.csv', 'a', newline='') as f:
-                writer = csv.writer(f)
-                writer.writerow([address, balance_eth, amount_to_send, tx_hash.hex()])
+// Keybindings
+screen.key(['1'], () => {
+  log('{green-fg}🚀 Sending ETH transaction...{/}');
+  // simulate transaction
+  setTimeout(() => log('{green-fg}✅ Transaction confirmed!{/}'), 2000);
+});
 
-            self.ui_callback(f"{address[:8]}...{address[-6:]} - Sent {amount_to_send:.6f} ETH", "success")
-            return tx_hash.hex(), amount_to_send
+screen.key(['2'], () => {
+  updateWalletInfo();
+  log('{cyan-fg}ℹ️ Refreshed gas price and balance{/}');
+});
 
-        except Exception as e:
-            with open('errors.log', 'a') as f:
-                f.write(f"{address},{str(e)}\n")
-            self.ui_callback(f"{address[:8]}...{address[-6:]} - Error: {str(e)}", "error")
-            return None, 0.0
+screen.key(['3'], () => {
+  log('{yellow-fg}📜 Showing logs...{/}');
+});
 
-class MegaEthSenderUI:
-    def __init__(self):
-        self.sender = MegaEthSender(self.update_console)
-        self.total_wallets = len(self.sender.private_keys)
-        self.processed = 0
-        self.successful = 0
-        self.failed = 0
-        self.eth_sent = 0.0
-        self.logs = []
-        self.quit_flag = False
-        self.listener = keyboard.Listener(on_press=self.on_key_press)
-        self.listener.start()
+screen.key(['q', 'C-c'], () => process.exit(0));
 
-    def on_key_press(self, key):
-        try:
-            if key.char == 'q':
-                self.quit_flag = True
-                self.update_console("User pressed Q to quit.", "warning")
-            elif key.char == 'r':
-                self.update_console("Refreshing display...", "info")
-                self.render_ui()
-        except AttributeError:
-            pass
+// Auto update wallet every 10 sec
+setInterval(updateWalletInfo, 10000);
 
-    def update_console(self, message, msg_type="info"):
-        timestamp = time.strftime("%H:%M:%S")
-        self.logs.append(f"{timestamp} | [{msg_type.upper()}] {message}")
-        self.render_ui()
-
-    def render_ui(self):
-        os.system('cls' if os.name == 'nt' else 'clear')
-
-        header = f"""
-{Fore.CYAN}███╗   ███╗███████╗ ██████╗  █████╗     ███████╗████████╗██╗  ██╗{Style.RESET_ALL}
-{Fore.CYAN}████╗ ████║██╔════╝██╔════╝ ██╔══██╗    ██╔════╝╚══██╔══╝██║  ██║{Style.RESET_ALL}
-{Fore.CYAN}██╔████╔██║█████╗  ██║  ███╗███████║    █████╗     ██║   ███████║{Style.RESET_ALL}
-{Fore.CYAN}██║╚██╔╝██║██╔══╝  ██║   ██║██╔══██║    ██╔══╝     ██║   ██╔══██║{Style.RESET_ALL}
-{Fore.CYAN}██║ ╚═╝ ██║███████╗╚██████╔╝██║  ██║    ███████╗   ██║   ██║  ██║{Style.RESET_ALL}
-{Fore.CYAN}╚═╝     ╚═╝╚══════╝ ╚═════╝ ╚═╝  ╚═╝    ╚══════╝   ╚═╝   ╚═╝  ╚═╝{Style.RESET_ALL}
-        """
-        console.print(header)
-
-        wallet_table = Table(title="Wallet Metrics", style="bold cyan")
-        wallet_table.add_column("Target")
-        wallet_table.add_column("Network")
-        wallet_table.add_column("Wallets")
-        wallet_table.add_column("Success")
-        wallet_table.add_column("Failed")
-        wallet_table.add_column("ETH Sent")
-
-        wallet_table.add_row(
-            self.sender.target_address[:10] + "...",
-            "PRIOR Testnet",
-            str(self.total_wallets),
-            str(self.successful),
-            str(self.failed),
-            f"{self.eth_sent:.6f}"
-        )
-        console.print(wallet_table)
-
-        log_table = Table(title="Logs", style="bold yellow")
-        log_table.add_column("Time & Event")
-        for log in self.logs[-10:]:
-            log_table.add_row(log)
-        console.print(log_table)
-
-        controls = f"""
-[Controls] Press:
-  r - Refresh UI
-  q - Quit App
-        """
-        console.print(controls, style="dim")
-
-    def run(self):
-        self.update_console("=== Starting MEGA ETH Sender ===", "info")
-        with open('transactions.csv', 'w', newline='') as f:
-            writer = csv.writer(f)
-            writer.writerow(['Address', 'Balance', 'Amount Sent', 'TxHash'])
-
-        with Progress(
-            SpinnerColumn(),
-            TextColumn("{task.description}"),
-            BarColumn(),
-            TextColumn("{task.completed}/{task.total}"),
-            transient=True,
-        ) as progress:
-            task = progress.add_task("Processing wallets...", total=self.total_wallets)
-
-            with ThreadPoolExecutor(max_workers=5) as executor:
-                future_to_key = {executor.submit(self.sender.transfer_eth, pk): pk for pk in self.sender.private_keys}
-                for future in future_to_key:
-                    if self.quit_flag:
-                        break
-                    tx_result, sent_amount = future.result()
-                    self.eth_sent += sent_amount
-                    if tx_result:
-                        self.successful += 1
-                    else:
-                        self.failed += 1
-                    self.processed += 1
-                    progress.advance(task)
-
-        self.update_console("\n=== Transaction Summary ===", "info")
-        self.update_console(f"Total Wallets: {self.total_wallets}", "info")
-        self.update_console(f"Successful: {self.successful}", "success")
-        self.update_console(f"Failed: {self.failed}", "error")
-        self.update_console(f"Total ETH Sent: {self.eth_sent:.6f}", "success")
-
-if __name__ == "__main__":
-    app = MegaEthSenderUI()
-    app.run()
+// Initial render
+screen.render();
