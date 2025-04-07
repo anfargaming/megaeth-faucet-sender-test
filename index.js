@@ -12,8 +12,14 @@ class ETHConsolidator {
       "https://testnet.megaeth.io/rpc"
     ];
     this.CHAIN_ID = 6342;
-    this.MIN_BALANCE = 0.0015; // Minimum ETH to leave in wallet
-    this.TX_DELAY_MS = 1000; // Delay between transactions
+    this.MIN_BALANCE = 0.0015;
+    this.TX_DELAY_MS = 1000;
+
+    this.successCount = 0;
+    this.failCount = 0;
+    this.ethSentTotal = 0;
+    this.ethSentTimestamps = [];
+
     this.initUI();
   }
 
@@ -29,7 +35,6 @@ class ETHConsolidator {
       screen: this.screen 
     });
 
-    // Transaction Logs - Taller to show more information
     this.logBox = this.grid.set(0, 0, 6, 12, contrib.log, {
       label: " Transaction Logs ",
       border: { type: "line", fg: "cyan" },
@@ -40,12 +45,30 @@ class ETHConsolidator {
       }
     });
 
-    // Wallet Status Table - Now with 6 columns
-    this.walletTable = this.grid.set(6, 0, 5, 12, contrib.table, {
+    this.walletTable = this.grid.set(6, 0, 4, 12, contrib.table, {
       label: " Wallet Status ",
       border: { type: "line", fg: "cyan" },
       columnWidth: [20, 12, 12, 12, 12, 40],
       columnSpacing: 2
+    });
+
+    this.donutChart = this.grid.set(10, 0, 2, 4, contrib.donut, {
+      label: " Success vs Failed ",
+      radius: 16,
+      arcWidth: 4,
+      yPadding: 2,
+      data: []
+    });
+
+    this.lineChart = this.grid.set(10, 4, 2, 8, contrib.line, {
+      label: ' ETH Sent Over Time ',
+      showLegend: true,
+      minY: 0,
+      style: {
+        line: "green",
+        text: "white",
+        baseline: "black"
+      }
     });
 
     this.screen.key(["q", "C-c"], () => process.exit(0));
@@ -111,6 +134,7 @@ class ETHConsolidator {
           currentBalance.toFixed(6),
           "Low balance"
         );
+        this.updateDonut();
         return "skipped";
       }
 
@@ -143,6 +167,13 @@ class ETHConsolidator {
 
       await tx.wait();
       this.log(`  Transaction confirmed`);
+
+      this.successCount++;
+      this.ethSentTotal += transferAmount;
+      this.ethSentTimestamps.push({ time: new Date(), value: this.ethSentTotal });
+      this.updateDonut();
+      this.updateLineChart();
+
       return "success";
     } catch (error) {
       this.log(`  Error: ${error.message}`);
@@ -156,6 +187,8 @@ class ETHConsolidator {
         currentBalance.toFixed(6),
         error.message.split("(")[0].slice(0, 20) + "..."
       );
+      this.failCount++;
+      this.updateDonut();
       return "failed";
     }
   }
@@ -191,6 +224,40 @@ class ETHConsolidator {
       statusDisplay,
       remainingBalance,
       info
+    ]);
+    this.screen.render();
+  }
+
+  updateDonut() {
+    const total = this.successCount + this.failCount || 1;
+    this.donutChart.setData([
+      {
+        percent: Math.round((this.successCount / total) * 100),
+        label: "Success",
+        color: "green"
+      },
+      {
+        percent: Math.round((this.failCount / total) * 100),
+        label: "Failed",
+        color: "red"
+      }
+    ]);
+    this.screen.render();
+  }
+
+  updateLineChart() {
+    const points = this.ethSentTimestamps.map((entry, i) => ({
+      title: i.toString(),
+      x: i,
+      y: parseFloat(entry.value.toFixed(4))
+    }));
+
+    this.lineChart.setData([
+      {
+        title: "ETH Sent",
+        x: points.map(p => p.title),
+        y: points.map(p => p.y)
+      }
     ]);
     this.screen.render();
   }
