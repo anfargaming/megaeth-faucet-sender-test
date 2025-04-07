@@ -14,64 +14,40 @@ class ETHConsolidator {
     this.CHAIN_ID = 6342;
     this.MIN_BALANCE = 0.0015;
     this.TX_DELAY_MS = 1000;
-
-    this.successCount = 0;
-    this.failCount = 0;
-    this.ethSentTotal = 0;
-    this.ethSentTimestamps = [];
-
+    this.walletData = [];
     this.initUI();
   }
 
   initUI() {
-    this.screen = blessed.screen({ 
-      smartCSR: true,
-      fullUnicode: true
-    });
-    
-    this.grid = new contrib.grid({ 
-      rows: 12, 
-      cols: 12, 
-      screen: this.screen 
-    });
+    this.screen = blessed.screen({ smartCSR: true, fullUnicode: true });
+
+    this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
 
     this.logBox = this.grid.set(0, 0, 6, 12, contrib.log, {
       label: " Transaction Logs ",
       border: { type: "line", fg: "cyan" },
       scrollable: true,
-      scrollbar: { 
-        style: { bg: "blue" },
-        track: { bg: "black" }
-      }
+      scrollbar: { style: { bg: "blue" }, track: { bg: "black" } }
     });
 
-    this.walletTable = this.grid.set(6, 0, 4, 12, contrib.table, {
+    this.walletTable = this.grid.set(6, 0, 5, 12, contrib.table, {
       label: " Wallet Status ",
       border: { type: "line", fg: "cyan" },
-      columnWidth: [20, 12, 12, 12, 12, 40],
-      columnSpacing: 2
+      columnSpacing: 2,
+      columnWidth: [20, 12, 12, 12, 12, 45]
     });
 
-    this.donutChart = this.grid.set(10, 0, 2, 4, contrib.donut, {
-      label: " Success vs Failed ",
-      radius: 16,
-      arcWidth: 4,
-      yPadding: 2,
+    this.walletTable.setData({
+      headers: ["Address", "Current", "Transfer", "Status", "Remaining", "Info"],
       data: []
     });
 
-    this.lineChart = this.grid.set(10, 4, 2, 8, contrib.line, {
-      label: ' ETH Sent Over Time ',
-      showLegend: true,
-      minY: 0,
-      style: {
-        line: "green",
-        text: "white",
-        baseline: "black"
-      }
-    });
-
     this.screen.key(["q", "C-c"], () => process.exit(0));
+  }
+
+  log(message) {
+    this.logBox.log(message);
+    this.screen.render();
   }
 
   async connect() {
@@ -81,8 +57,8 @@ class ETHConsolidator {
         await provider.getBlockNumber();
         this.provider = provider;
         this.log(`✓ Connected to ${rpc}`);
-        return true;
-      } catch (error) {
+        return;
+      } catch {
         this.log(`✗ Failed to connect to ${rpc}`);
       }
     }
@@ -92,50 +68,54 @@ class ETHConsolidator {
   async loadConfig() {
     try {
       this.targetAddress = fs.readFileSync("target_address.txt", "utf-8").trim();
-      if (!ethers.isAddress(this.targetAddress)) {
-        throw new Error("Invalid target address format");
-      }
+      if (!ethers.isAddress(this.targetAddress)) throw new Error("Invalid target address format");
 
       this.privateKeys = fs.readFileSync("private_keys.txt", "utf-8")
         .split("\n")
         .map(line => line.trim())
-        .filter(line => line.length > 0);
+        .filter(Boolean);
 
-      if (this.privateKeys.length === 0) {
-        throw new Error("No private keys found");
-      }
+      if (this.privateKeys.length === 0) throw new Error("No private keys found");
     } catch (error) {
       throw new Error(`Config error: ${error.message}`);
     }
   }
 
-  log(message) {
-    this.logBox.log(message);
+  async getBalance(address) {
+    const balance = await this.provider.getBalance(address);
+    return parseFloat(ethers.formatEther(balance));
+  }
+
+  updateTable() {
+    this.walletTable.setData({
+      headers: ["Address", "Current", "Transfer", "Status", "Remaining", "Info"],
+      data: this.walletData
+    });
     this.screen.render();
   }
 
   async processWallet(privateKey, index) {
     const wallet = new ethers.Wallet(privateKey, this.provider);
     const address = wallet.address;
-    
+    const shortAddress = address.slice(0, 6) + "..." + address.slice(-4);
     this.log(`\n[${index + 1}/${this.privateKeys.length}] Processing ${address}`);
-    
+
     try {
       const currentBalance = await this.getBalance(address);
       this.log(`  Current Balance: ${currentBalance.toFixed(6)} ETH`);
 
       if (currentBalance <= this.MIN_BALANCE) {
         this.log(`  Skipping - needs minimum ${this.MIN_BALANCE} ETH`);
-        this.updateTable(
-          address,
+        this.walletData.push([
+          shortAddress,
           currentBalance.toFixed(6),
           "0.000000",
-          "Skipped",
+          "{yellow-fg}Skipped{/yellow-fg}",
           currentBalance.toFixed(6),
           "Low balance"
-        );
-        this.updateDonut();
-        return "skipped";
+        ]);
+        this.updateTable();
+        return;
       }
 
       const transferAmount = currentBalance - this.MIN_BALANCE;
@@ -150,116 +130,32 @@ class ETHConsolidator {
       });
 
       this.log(`  TX Hash: ${tx.hash}`);
-      const explorerLink = `https://explorer.megaeth.io/tx/${tx.hash}`;
-      this.log(`  View on Explorer: ${explorerLink}`);
-
-      const remainingBalance = this.MIN_BALANCE;
-      this.log(`  Remaining Balance: ${remainingBalance.toFixed(6)} ETH`);
-
-      this.updateTable(
-        address,
-        currentBalance.toFixed(6),
-        transferAmount.toFixed(6),
-        "Success",
-        remainingBalance.toFixed(6),
-        explorerLink
-      );
-
       await tx.wait();
       this.log(`  Transaction confirmed`);
 
-      this.successCount++;
-      this.ethSentTotal += transferAmount;
-      this.ethSentTimestamps.push({ time: new Date(), value: this.ethSentTotal });
-      this.updateDonut();
-      this.updateLineChart();
-
-      return "success";
+      const explorerLink = `https://explorer.megaeth.io/tx/${tx.hash}`;
+      this.walletData.push([
+        shortAddress,
+        currentBalance.toFixed(6),
+        transferAmount.toFixed(6),
+        "{green-fg}Success{/green-fg}",
+        this.MIN_BALANCE.toFixed(6),
+        explorerLink
+      ]);
     } catch (error) {
-      this.log(`  Error: ${error.message}`);
       const currentBalance = await this.getBalance(address).catch(() => 0);
-
-      this.updateTable(
-        address,
+      this.walletData.push([
+        shortAddress,
         currentBalance.toFixed(6),
         "0.000000",
-        "Failed",
+        "{red-fg}Failed{/red-fg}",
         currentBalance.toFixed(6),
-        error.message.split("(")[0].slice(0, 20) + "..."
-      );
-      this.failCount++;
-      this.updateDonut();
-      return "failed";
-    }
-  }
-
-  async getBalance(address) {
-    const balance = await this.provider.getBalance(address);
-    return parseFloat(ethers.formatEther(balance));
-  }
-
-  updateTable(address, currentBalance, transferAmount, status, remainingBalance, info) {
-    const shortAddress = address.slice(0, 6) + "..." + address.slice(-4);
-
-    if (!this.walletTable.rows) {
-      this.walletTable.setData({
-        headers: ["Address", "Current", "Transfer", "Status", "Remaining", "Info"],
-        data: []
-      });
+        error.message.split("(")[0].slice(0, 40) + "..."
+      ]);
+      this.log(`  Error: ${error.message}`);
     }
 
-    let statusDisplay = status;
-    if (status === "Success") {
-      statusDisplay = `{green-fg}${status}{/green-fg}`;
-    } else if (status === "Failed") {
-      statusDisplay = `{red-fg}${status}{/red-fg}`;
-    } else {
-      statusDisplay = `{yellow-fg}${status}{/yellow-fg}`;
-    }
-
-    this.walletTable.addRow([
-      shortAddress,
-      currentBalance,
-      transferAmount,
-      statusDisplay,
-      remainingBalance,
-      info
-    ]);
-    this.screen.render();
-  }
-
-  updateDonut() {
-    const total = this.successCount + this.failCount || 1;
-    this.donutChart.setData([
-      {
-        percent: Math.round((this.successCount / total) * 100),
-        label: "Success",
-        color: "green"
-      },
-      {
-        percent: Math.round((this.failCount / total) * 100),
-        label: "Failed",
-        color: "red"
-      }
-    ]);
-    this.screen.render();
-  }
-
-  updateLineChart() {
-    const points = this.ethSentTimestamps.map((entry, i) => ({
-      title: i.toString(),
-      x: i,
-      y: parseFloat(entry.value.toFixed(4))
-    }));
-
-    this.lineChart.setData([
-      {
-        title: "ETH Sent",
-        x: points.map(p => p.title),
-        y: points.map(p => p.y)
-      }
-    ]);
-    this.screen.render();
+    this.updateTable();
   }
 
   async run() {
