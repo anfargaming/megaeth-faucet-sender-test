@@ -1,7 +1,7 @@
 const fs = require("fs");
 const { ethers } = require("ethers");
 const chalk = require("chalk");
-const ora = require("ora");
+const ora = (await import('ora')).default;
 const figlet = require("figlet");
 
 // Load private keys and target address
