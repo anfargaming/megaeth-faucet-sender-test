@@ -1,108 +1,88 @@
-const fs = require("fs");
-const { ethers } = require("ethers");
-const chalk = require("chalk");
-const ora = require("ora");
-const figlet = require("figlet");
+import { ethers } from "ethers";
+import chalk from "chalk";
+import ora from "ora";
+import figlet from "figlet";
+import cliProgress from "cli-progress";
+import fs from "fs";
 
-// Load private keys and target address
-const privateKeys = fs.readFileSync("private_keys.txt", "utf-8").split("\n").filter(Boolean);
-const targetAddress = fs.readFileSync("target_address.txt", "utf-8").trim();
+// 🎯 Config
+const RPC_URL = 'https://carrot.megaeth.com/rpc';
+const TARGET_ADDRESS = '0xf6c206788597D497dBE431898A18daB5bc4dC60A';
+const provider = new ethers.JsonRpcProvider(RPC_URL);
 
-// RPC endpoints
-const rpcEndpoints = [
-  "https://carrot.megaeth.com/rpc",
-  "https://rpc.testnet.megaeth.com",
-  "https://testnet.megaeth.io/rpc",
-];
+// 📂 Load wallets
+const wallets = JSON.parse(fs.readFileSync('./wallets.json', 'utf-8'));
 
-const chainId = 6342;
-const gasLimit = 21000;
-const maxFeePerGas = ethers.parseUnits("0.0025", "gwei");
-const maxPriorityFeePerGas = ethers.parseUnits("0.001", "gwei");
+// 💡 Stats
+let success = 0, failed = 0, skipped = 0;
 
-let provider;
+// 🎬 Fancy banner
+console.log(chalk.cyan(figlet.textSync("MEGA ETH", { font: "Slant" })));
+console.log(chalk.green.bold("🚀 Starting MEGA ETH Consolidation"));
+console.log(`📌 ${chalk.yellow("Chain ID")}: 6342`);
+console.log(`🎯 ${chalk.yellow("Target Address")}: ${TARGET_ADDRESS}`);
+console.log(`🔑 ${chalk.yellow("Wallets to process")}: ${wallets.length}`);
+console.log(`\n✅ Connected to ${RPC_URL}\n`);
 
-async function connectProvider() {
-  for (const url of rpcEndpoints) {
-    try {
-      const p = new ethers.JsonRpcProvider(url);
-      await p.getBlockNumber(); // test connection
-      console.log(chalk.green(`✅ Connected to ${url}`));
-      return p;
-    } catch {
-      console.log(chalk.yellow(`⚠️ Failed to connect to ${url}`));
-    }
-  }
-  throw new Error("❌ Could not connect to any RPC endpoint.");
-}
+// 📊 Progress bar setup
+const bar = new cliProgress.SingleBar({
+  format: `${chalk.magenta('Progress')} [{bar}] {percentage}% | {value}/{total} wallets`,
+  barCompleteChar: '\u2588',
+  barIncompleteChar: '\u2591',
+  hideCursor: true
+}, cliProgress.Presets.shades_classic);
 
-async function processWallet(privateKey, index, total) {
-  const spinner = ora(`🔐 Processing wallet [${index}/${total}]`).start();
+bar.start(wallets.length, 0);
+
+// 🔁 Wallet Processor
+async function processWallet(index, walletData) {
+  const { privateKey } = walletData;
+  const wallet = new ethers.Wallet(privateKey, provider);
+  const spinner = ora(`🔍 [${index + 1}] Checking ${wallet.address}`).start();
 
   try {
-    const wallet = new ethers.Wallet(privateKey, provider);
     const balance = await provider.getBalance(wallet.address);
-    const ethBalance = Number(ethers.formatEther(balance));
+    const ethBalance = parseFloat(ethers.formatEther(balance));
 
-    if (ethBalance <= 0) {
-      spinner.warn(chalk.gray(`⏩ ${wallet.address} | Skipped - zero balance`));
-      return { status: "skipped" };
+    spinner.text = `💰 Balance: ${chalk.yellow(ethBalance.toFixed(5))} ETH`;
+
+    if (ethBalance > 0.002) {
+      const valueToSend = ethBalance - 0.001;
+      spinner.text = `💸 Sending ${valueToSend.toFixed(5)} ETH...`;
+
+      const tx = await wallet.sendTransaction({
+        to: TARGET_ADDRESS,
+        value: ethers.parseEther(valueToSend.toString())
+      });
+
+      await tx.wait();
+
+      spinner.succeed(`✅ ${wallet.address}\n   💸 Sent: ${chalk.green(valueToSend.toFixed(5))} ETH\n   🔗 Tx Link: ${chalk.blue.underline(`https://megaexplorer.xyz/tx/${tx.hash}`)}\n   🧾 Block: ${chalk.yellow(tx.blockNumber)}`);
+      success++;
+    } else {
+      spinner.warn(`⚠️ ${wallet.address} | Skipped - low balance (${ethBalance.toFixed(5)} ETH)`);
+      skipped++;
     }
-
-    const amountToSend = Math.max(ethBalance - 0.001, 0);
-    if (amountToSend <= 0) {
-      spinner.warn(chalk.gray(`⏩ ${wallet.address} | Skipped - low balance`));
-      return { status: "skipped" };
-    }
-
-    const tx = {
-      to: targetAddress,
-      value: ethers.parseEther(amountToSend.toFixed(6)),
-      gasLimit,
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-      chainId,
-      type: 2,
-    };
-
-    const response = await wallet.sendTransaction(tx);
-    const receipt = await response.wait();
-    const remainingBalance = await provider.getBalance(wallet.address);
-
-    spinner.succeed(chalk.cyanBright(`✅ ${wallet.address}`));
-    console.log(chalk.green(`   💸 Sent:        ${amountToSend.toFixed(6)} ETH`));
-    console.log(chalk.blue(`   🔗 Tx Link:     https://megaexplorer.xyz/tx/${response.hash}`));
-    console.log(chalk.gray(`   🧾 Block:       ${receipt.blockNumber}`));
-    console.log(chalk.gray(`   💼 Remaining:   ${Number(ethers.formatEther(remainingBalance)).toFixed(6)} ETH`));
-    return { status: "success" };
-
   } catch (err) {
-    spinner.fail(chalk.red(`❌ Error: ${err.message}`));
-    return { status: "failed" };
+    spinner.fail(`❌ ${wallet.address} | ${chalk.red(err.message)}`);
+    failed++;
   }
+
+  bar.increment();
 }
 
-(async () => {
-  console.log(chalk.magenta(figlet.textSync("MEGA ETH", { horizontalLayout: "fitted" })));
-  console.log(chalk.cyanBright(`🚀 Starting MEGA ETH Consolidation`));
-  console.log(chalk.gray(`📌 Chain ID: ${chainId}`));
-  console.log(chalk.gray(`🎯 Target Address: ${targetAddress}`));
-  console.log(chalk.gray(`🔑 Wallets to process: ${privateKeys.length}\n`));
-
-  provider = await connectProvider();
-
-  let success = 0, fail = 0, skipped = 0;
-
-  for (let i = 0; i < privateKeys.length; i++) {
-    const result = await processWallet(privateKeys[i], i + 1, privateKeys.length);
-    if (result.status === "success") success++;
-    else if (result.status === "failed") fail++;
-    else skipped++;
-    await new Promise(res => setTimeout(res, 1000));
+// 🚀 Start processing
+async function main() {
+  for (let i = 0; i < wallets.length; i++) {
+    await processWallet(i, wallets[i]);
   }
 
-  console.log(chalk.yellow(`\n✨ Done!`));
-  console.log(chalk.green(`✅ Success: ${success}`));
-  console.log(chalk.red(`❌ Failed: ${fail}`));
-  console.log(chalk.gray(`⏩ Skipped: ${skipped}\n`));
-})();
+  bar.stop();
+
+  console.log(`\n✨ ${chalk.bold("Done!")}`);
+  console.log(`${chalk.green("✅ Success")}: ${success}`);
+  console.log(`${chalk.red("❌ Failed")}: ${failed}`);
+  console.log(`${chalk.yellow("⏩ Skipped")}: ${skipped}\n`);
+}
+
+main();
