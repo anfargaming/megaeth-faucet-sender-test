@@ -13,7 +13,7 @@ cd megaeth-faucet-sender
 pip install -r requirements.txt
 ```
 ```bash
-python consolidate.py
+python bot.py
 ```
 
 
