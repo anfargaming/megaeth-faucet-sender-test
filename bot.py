@@ -54,7 +54,7 @@ class ETHConsolidator:
         for attempt in range(max_retries):
             try:
                 balance_wei = self.w3.eth.get_balance(address)
-                return self.w3.from_wei(balance_wei, 'ether')
+                return float(self.w3.from_wei(balance_wei, 'ether'))  # Convert to float
             except Exception as e:
                 if attempt == max_retries - 1:
                     raise
@@ -71,20 +71,20 @@ class ETHConsolidator:
         
         try:
             # Get balance with retry logic
-            balance = self.get_balance(address)
-            print(f"Current balance: {balance} ETH")
+            balance_eth = self.get_balance(address)
+            print(f"Current balance: {balance_eth} ETH")
             
-            if balance <= 0:
+            if balance_eth <= 0:
                 print("Skipping - zero balance")
                 return None
             
             # Calculate amount to send (leave 0.001 ETH for gas)
-            amount_to_send = max(balance - 0.001, 0)
+            amount_to_send = max(balance_eth - 0.001, 0)
             if amount_to_send <= 0:
                 print("Skipping - insufficient balance after gas reserve")
                 return None
                 
-            print(f"Preparing to send: {amount_to_send} ETH")
+            print(f"Preparing to send: {amount_to_send:.6f} ETH")
             
             # Get current gas parameters
             gas_limit = 21000
