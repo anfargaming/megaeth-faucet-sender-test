@@ -35,7 +35,7 @@ class MegaEthSender:
     def _connect_to_provider(self):
         for endpoint in self.rpc_endpoints:
             try:
-                w3 = Web3(Web3.HTTPProvider(endpoint))
+                w3 = Web3(WebWeb.HTTPProvider(endpoint))
                 if w3.is_connected():
                     self.ui_callback(f"Connected to {endpoint}", "success")
                     return w3
@@ -108,7 +108,7 @@ class MegaEthSender:
             self.ui_callback(f"{address[:8]}...{address[-6:]} - Error: {str(e)}", "error")
             return None
 
-class MegaEthSenderCLI:
+class MegaEthSenderUI:
     def __init__(self):
         self.sender = MegaEthSender(self.update_console)
         self.total_wallets = len(self.sender.private_keys)
@@ -116,7 +116,7 @@ class MegaEthSenderCLI:
         self.successful = 0
         self.failed = 0
         self.eth_sent = 0.0
-        self.logs = []
+        self.logs = []  # Initialize logs as an empty list
 
     def update_console(self, message, msg_type="info"):
         timestamp = time.strftime("%H:%M:%S")
@@ -137,7 +137,7 @@ class MegaEthSenderCLI:
 {Fore.MAGENTA}   ____  _   _  ____  ____  _  _  ____  ____  _  _  ____  _  _  
 {Fore.MAGENTA}  ( ___)( )_( )(  _ \\(  __)/ )( \\(  __)(  _ \\( \\/ )(  _ \\( \\/ ) 
 {Fore.MAGENTA}   )__)  ) _ (  )___/ ) _) ) __ ( ) _)  )___/ )  (  )___/ )  (  
-{Fore.MAGENTA}  (____)(_)(_)(__)  (____)_)(_\\_(____)(__)  (_)\\_)(____)(_\\_) 
+{Fore.MAGENTA}  (____)(_)(_)(__)  (____)_)(\\_(____)(__)  (_)\\_)(____)(_\\_) 
 {Fore.CYAN}   - MEGA ETH SENDER v1.0 -{Style.RESET_ALL}
 """
         console.print(header)
@@ -211,5 +211,5 @@ class MegaEthSenderCLI:
         self.update_console(f"Failed: {self.failed}", "error" if self.failed > 0 else "success")
 
 if __name__ == "__main__":
-    app = MegaEthSenderCLI()
+    app = MegaEthSenderUI()
     app.run()
