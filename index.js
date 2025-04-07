@@ -12,7 +12,8 @@ import cluster from 'node:cluster';
 import { setInterval } from 'timers/promises';
 
 // ====== Load Configuration ======
-const provider = new ethers.JsonRpcProvider('https://carrot.megaeth.com/rpc');
+const rpcUrl = 'https://carrot.megaeth.com/rpc';
+const provider = new ethers.JsonRpcProvider(rpcUrl);
 const chainId = 6342;
 
 const privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
@@ -115,7 +116,7 @@ console.log(chalk.green(`🚀 Starting MEGA ETH Consolidation`));
 console.log(`📌 Chain ID: ${chainId}`);
 console.log(`🎯 Target Address: ${targetAddress}`);
 console.log(`🔑 Wallets to process: ${totalWallets}\n`);
-console.log(chalk.green(`✅ Connected to ${provider.connection.url}`));
+console.log(chalk.green(`✅ Connected to ${rpcUrl}`));
 
 const clusters = clusterWallets(privateKeys);
 const progressBar = new cliProgress.SingleBar({}, cliProgress.Presets.shades_classic);
