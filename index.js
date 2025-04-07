@@ -12,39 +12,38 @@ class ETHConsolidator {
       "https://testnet.megaeth.io/rpc"
     ];
     this.CHAIN_ID = 6342;
-    this.MIN_BALANCE = 0.0015; // Minimum ETH to leave in wallet
-    this.TX_DELAY_MS = 1000; // Delay between transactions
+    this.MIN_BALANCE = 0.0015;
+    this.TX_DELAY_MS = 1000;
+    this.tableData = [];
     this.initUI();
   }
 
   initUI() {
-    this.screen = blessed.screen({ 
+    this.screen = blessed.screen({
       smartCSR: true,
       fullUnicode: true
     });
-    
-    this.grid = new contrib.grid({ 
-      rows: 12, 
-      cols: 12, 
-      screen: this.screen 
+
+    this.grid = new contrib.grid({
+      rows: 12,
+      cols: 12,
+      screen: this.screen
     });
 
-    // Transaction Logs - Taller to show more information
     this.logBox = this.grid.set(0, 0, 6, 12, contrib.log, {
       label: " Transaction Logs ",
       border: { type: "line", fg: "cyan" },
       scrollable: true,
-      scrollbar: { 
+      scrollbar: {
         style: { bg: "blue" },
         track: { bg: "black" }
       }
     });
 
-    // Wallet Status Table - Now with 6 columns
     this.walletTable = this.grid.set(6, 0, 5, 12, contrib.table, {
       label: " Wallet Status ",
       border: { type: "line", fg: "cyan" },
-      columnWidth: [20, 12, 12, 12, 12, 30], // Adjusted for new columns
+      columnWidth: [20, 12, 12, 12, 12, 30],
       columnSpacing: 2
     });
 
@@ -91,14 +90,47 @@ class ETHConsolidator {
     this.screen.render();
   }
 
+  async getBalance(address) {
+    const balance = await this.provider.getBalance(address);
+    return parseFloat(ethers.formatEther(balance));
+  }
+
+  updateTable(address, currentBalance, transferAmount, status, remainingBalance, info) {
+    const shortAddress = address.slice(0, 6) + "..." + address.slice(-4);
+
+    let statusDisplay = status;
+    if (status === "Success") {
+      statusDisplay = `{green-fg}${status}{/green-fg}`;
+    } else if (status === "Failed") {
+      statusDisplay = `{red-fg}${status}{/red-fg}`;
+    } else {
+      statusDisplay = `{yellow-fg}${status}{/yellow-fg}`;
+    }
+
+    this.tableData.push([
+      shortAddress,
+      currentBalance,
+      transferAmount,
+      statusDisplay,
+      remainingBalance,
+      info
+    ]);
+
+    this.walletTable.setData({
+      headers: ["Address", "Current", "Transfer", "Status", "Remaining", "Info"],
+      data: this.tableData
+    });
+
+    this.screen.render();
+  }
+
   async processWallet(privateKey, index) {
     const wallet = new ethers.Wallet(privateKey, this.provider);
     const address = wallet.address;
-    
+
     this.log(`\n[${index + 1}/${this.privateKeys.length}] Processing ${address}`);
-    
+
     try {
-      // Get current balance
       const currentBalance = await this.getBalance(address);
       this.log(`  Current Balance: ${currentBalance.toFixed(6)} ETH`);
 
@@ -109,17 +141,15 @@ class ETHConsolidator {
           currentBalance.toFixed(6),
           "0.000000",
           "Skipped",
-          "0.000000",
+          currentBalance.toFixed(6),
           "Low balance"
         );
         return "skipped";
       }
 
-      // Calculate transfer amount
       const transferAmount = currentBalance - this.MIN_BALANCE;
       this.log(`  Transfer Amount: ${transferAmount.toFixed(6)} ETH`);
 
-      // Send transaction
       const tx = await wallet.sendTransaction({
         to: this.targetAddress,
         value: ethers.parseEther(transferAmount.toFixed(6)),
@@ -129,10 +159,7 @@ class ETHConsolidator {
       });
 
       this.log(`  TX Hash: ${tx.hash}`);
-      
-      // Get remaining balance after transfer
-      const remainingBalance = this.MIN_BALANCE; // We explicitly leave this amount
-      this.log(`  Remaining Balance: ${remainingBalance.toFixed(6)} ETH`);
+      const remainingBalance = this.MIN_BALANCE;
 
       this.updateTable(
         address,
@@ -143,7 +170,6 @@ class ETHConsolidator {
         `TX: ${tx.hash.slice(0, 12)}...`
       );
 
-      // Wait for confirmation
       await tx.wait();
       this.log(`  Transaction confirmed`);
 
@@ -151,7 +177,7 @@ class ETHConsolidator {
     } catch (error) {
       this.log(`  Error: ${error.message}`);
       const currentBalance = await this.getBalance(address).catch(() => 0);
-      
+
       this.updateTable(
         address,
         currentBalance.toFixed(6),
@@ -164,43 +190,6 @@ class ETHConsolidator {
     }
   }
 
-  async getBalance(address) {
-    const balance = await this.provider.getBalance(address);
-    return parseFloat(ethers.formatEther(balance));
-  }
-
-  updateTable(address, currentBalance, transferAmount, status, remainingBalance, info) {
-    const shortAddress = address.slice(0, 6) + "..." + address.slice(-4);
-    
-    // Initialize table if first row
-    if (!this.walletTable.rows) {
-      this.walletTable.setData({
-        headers: ["Address", "Current", "Transfer", "Status", "Remaining", "Info"],
-        data: []
-      });
-    }
-    
-    // Color coding for status
-    let statusDisplay = status;
-    if (status === "Success") {
-      statusDisplay = `{green-fg}${status}{/green-fg}`;
-    } else if (status === "Failed") {
-      statusDisplay = `{red-fg}${status}{/red-fg}`;
-    } else {
-      statusDisplay = `{yellow-fg}${status}{/yellow-fg}`;
-    }
-
-    this.walletTable.addRow([
-      shortAddress,
-      currentBalance,
-      transferAmount,
-      statusDisplay,
-      remainingBalance,
-      info
-    ]);
-    this.screen.render();
-  }
-
   async run() {
     try {
       await this.connect();
@@ -211,8 +200,6 @@ class ETHConsolidator {
 
       for (let i = 0; i < this.privateKeys.length; i++) {
         await this.processWallet(this.privateKeys[i], i);
-        
-        // Add delay between transactions except the last one
         if (i < this.privateKeys.length - 1) {
           await new Promise(resolve => setTimeout(resolve, this.TX_DELAY_MS));
         }
