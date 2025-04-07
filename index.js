@@ -25,20 +25,20 @@ class ETHConsolidator {
     this.screen = blessed.screen({ smartCSR: true });
     this.grid = new contrib.grid({ rows: 12, cols: 12, screen: this.screen });
 
-    this.logBox = this.grid.set(0, 0, 6, 12, contrib.log, {
+    this.logBox = this.grid.set(0, 0, 6, 9, contrib.log, {
       label: " Transaction Logs ",
       border: { type: "line", fg: "cyan" },
       scrollbar: { style: { bg: "blue" } },
     });
 
-    this.walletTable = this.grid.set(6, 0, 4, 12, contrib.table, {
+    this.walletTable = this.grid.set(6, 0, 6, 9, contrib.table, {
       label: " Wallet Status ",
       columnWidth: [20, 12, 12, 12, 12, 34],
       columnSpacing: 2,
       border: { type: "line", fg: "cyan" },
     });
 
-    this.statusBox = this.grid.set(10, 0, 2, 12, blessed.box, {
+    this.statusBox = this.grid.set(0, 9, 12, 3, blessed.box, {
       label: " Final Status ",
       border: { type: "line", fg: "cyan" },
       tags: true,
@@ -86,8 +86,8 @@ class ETHConsolidator {
   updateStatusBox() {
     const total = this.successCount + this.failCount + this.skippedCount;
     this.statusBox.setContent(
-      `{bold}Total Success:{/bold} ${this.successCount}\n` +
-      `{bold}Total Failed:{/bold} ${this.failCount}\n` +
+      `{bold}Total {green-fg}Success:{/green-fg}{/bold} ${this.successCount}\n` +
+      `{bold}Total {red-fg}Failed:{/red-fg}{/bold} ${this.failCount}\n` +
       `{bold}Total Skipped:{/bold} ${this.skippedCount}\n` +
       `{bold}Final Status:{/bold} ${total === this.privateKeys?.length ? "Completed" : "Processing..."}`
     );
