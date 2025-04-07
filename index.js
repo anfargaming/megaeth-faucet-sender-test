@@ -1,134 +1,66 @@
-// mega-eth-sender-terminal.js
-const blessed = require('blessed');
-const figlet = require('figlet');
+const fs = require('fs');
 const { ethers } = require('ethers');
+const chalk = require('chalk');
 
-// Create screen
-const screen = blessed.screen({ smartCSR: true, title: 'Mega ETH Sender Pro' });
+// === CONFIGURATION ===
+const RPC_URL = "https://rpc.prior.ethereum.ooga"; // Replace with your faucet/testnet RPC
+const AMOUNT_TO_SEND = "0.001"; // ETH to send from each wallet
 
-// Styles
-const style = { fg: 'green', bg: 'black', border: { fg: 'cyan' } };
+// === LOAD FILES ===
+const privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
+  .split('\n')
+  .map(l => l.trim())
+  .filter(Boolean);
 
-// State
-let logs = [];
-const walletAddress = '0xYourWalletAddress';
-let ethBalance = '...';
-let gasPrice = '...';
+const targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
 
-// Header
-const header = blessed.box({
-  top: 0,
-  height: 5,
-  width: '100%',
-  tags: true,
-  content: '',
-  style: { fg: 'magenta', bg: 'black' },
-});
-screen.append(header);
-
-// Wallet Box
-const walletBox = blessed.box({
-  top: 5,
-  left: 0,
-  width: '40%',
-  height: 9,
-  label: '📒 Wallet Info',
-  tags: true,
-  border: 'line',
-  style,
-});
-screen.append(walletBox);
-
-// Logs Box
-const logBox = blessed.box({
-  top: 5,
-  left: '40%',
-  width: '60%',
-  height: '90%-5',
-  label: '📜 Transaction Logs',
-  tags: true,
-  border: 'line',
-  scrollable: true,
-  alwaysScroll: true,
-  scrollbar: { ch: ' ', track: { bg: 'gray' }, style: { bg: 'cyan' } },
-  style,
-});
-screen.append(logBox);
-
-// Menu Box
-const menuBox = blessed.box({
-  bottom: 0,
-  height: 4,
-  width: '100%',
-  tags: true,
-  content: '{cyan-fg} [1] Send ETH  |  [2] Check Gas  |  [3] View Logs  |  [q] Quit {/cyan-fg}',
-  style: { fg: 'white', bg: 'blue' },
-});
-screen.append(menuBox);
-
-// Load Header ASCII
-function animateHeader() {
-  figlet('Mega ETH\nSender Pro', (err, data) => {
-    if (!err) {
-      header.setContent(`{magenta-fg}${data}{/}`);
-      screen.render();
-    }
-  });
+// === CHECKS ===
+if (!ethers.isAddress(targetAddress)) {
+  console.error(chalk.red(`❌ Invalid target address: ${targetAddress}`));
+  process.exit(1);
 }
-animateHeader();
 
-// Update Wallet Info
-async function updateWalletInfo() {
+if (privateKeys.length === 0) {
+  console.error(chalk.red(`❌ No private keys found in private_keys.txt`));
+  process.exit(1);
+}
+
+// === START PROVIDER ===
+const provider = new ethers.JsonRpcProvider(RPC_URL);
+
+// === SEND FUNCTION ===
+async function sendFromWallet(index, privateKey) {
   try {
-    const provider = new ethers.providers.JsonRpcProvider('https://ethereum.publicnode.com');
-    const balance = await provider.getBalance(walletAddress);
-    const gas = await provider.getGasPrice();
+    const wallet = new ethers.Wallet(privateKey, provider);
+    const balance = await provider.getBalance(wallet.address);
 
-    ethBalance = ethers.utils.formatEther(balance);
-    gasPrice = ethers.utils.formatUnits(gas, 'gwei');
+    console.log(chalk.blue(`\n[${index + 1}] Wallet: ${wallet.address}`));
+    console.log(chalk.gray(`Balance: ${ethers.formatEther(balance)} ETH`));
 
-    walletBox.setContent(
-      `{bold}Wallet:{/} ${walletAddress.slice(0, 10)}...` +
-      `\n{green-fg}ETH Balance:{/} ${ethBalance}` +
-      `\n{yellow-fg}Gas Price:{/} ${gasPrice} Gwei`
-    );
-    screen.render();
+    if (balance < ethers.parseEther(AMOUNT_TO_SEND)) {
+      console.log(chalk.yellow(`❌ Insufficient balance. Skipping...`));
+      return;
+    }
+
+    const tx = await wallet.sendTransaction({
+      to: targetAddress,
+      value: ethers.parseEther(AMOUNT_TO_SEND),
+    });
+
+    console.log(chalk.green(`✅ TX sent: ${tx.hash}`));
+    await tx.wait();
+    console.log(chalk.green(`🎉 TX confirmed`));
   } catch (err) {
-    log('[ERROR] Failed to load wallet info');
+    console.error(chalk.red(`❌ Error with wallet [${index + 1}]: ${err.message}`));
   }
 }
-updateWalletInfo();
 
-// Logging
-function log(msg) {
-  const time = new Date().toLocaleTimeString();
-  logs.push(`{gray-fg}[${time}]{/} ${msg}`);
-  if (logs.length > 100) logs.shift();
-  logBox.setContent(logs.join('\n'));
-  logBox.setScrollPerc(100);
-  screen.render();
-}
+// === MULTI SEND START ===
+(async () => {
+  console.log(chalk.cyan(`🚀 Starting Mega ETH Sender...`));
+  console.log(chalk.cyan(`Sending ${AMOUNT_TO_SEND} ETH from ${privateKeys.length} wallets\n`));
 
-// Keybindings
-screen.key(['1'], () => {
-  log('{green-fg}🚀 Sending ETH transaction...{/}');
-  // simulate transaction
-  setTimeout(() => log('{green-fg}✅ Transaction confirmed!{/}'), 2000);
-});
+  await Promise.all(privateKeys.map((pk, i) => sendFromWallet(i, pk)));
 
-screen.key(['2'], () => {
-  updateWalletInfo();
-  log('{cyan-fg}ℹ️ Refreshed gas price and balance{/}');
-});
-
-screen.key(['3'], () => {
-  log('{yellow-fg}📜 Showing logs...{/}');
-});
-
-screen.key(['q', 'C-c'], () => process.exit(0));
-
-// Auto update wallet every 10 sec
-setInterval(updateWalletInfo, 10000);
-
-// Initial render
-screen.render();
+  console.log(chalk.magenta(`\n🎯 All transactions attempted.`));
+})();
