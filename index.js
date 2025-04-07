@@ -55,11 +55,22 @@ const summaryBox = grid.set(0, 6, 6, 6, blessed.box, {
   content: "Loading..."
 });
 
-const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
+const walletTable = grid.set(6, 0, 4, 12, contrib.table, {
   keys: true,
   fg: "white",
   label: "Wallet Status",
   columnWidth: [42, 12, 10, 60]
+});
+
+const lineChart = grid.set(10, 0, 2, 12, contrib.line, {
+  style: {
+    line: "yellow",
+    text: "green",
+    baseline: "black"
+  },
+  label: "Transaction Count Over Time",
+  showLegend: true,
+  legend: { width: 15 }
 });
 
 const exitInfo = grid.set(11, 0, 1, 12, blessed.box, {
@@ -73,6 +84,7 @@ screen.key(['q', 'C-c'], function () {
 
 let success = 0, failed = 0;
 const tableData = [];
+const txTrend = [];
 
 async function getBalance(address) {
   const balance = await provider.getBalance(address);
@@ -121,6 +133,9 @@ async function sendETH(privateKey, index) {
     failed++;
     tableData.push([address, "0", "Failed", err.message.slice(0, 40)]);
   }
+
+  txTrend.push(success + failed);
+  lineChart.setData([{ title: "TX Count", x: txTrend.map((_, i) => `${i + 1}`), y: txTrend }]);
 
   walletTable.setData({
     headers: ["Address", "Amount", "Status", "Info / Link"],
