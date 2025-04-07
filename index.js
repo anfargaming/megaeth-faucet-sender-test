@@ -1,88 +1,116 @@
-import { ethers } from "ethers";
-import chalk from "chalk";
-import ora from "ora";
-import figlet from "figlet";
-import cliProgress from "cli-progress";
-import fs from "fs";
+// index.js
+import fs from 'fs';
+import { ethers } from 'ethers';
+import ora from 'ora';
+import chalk from 'chalk';
+import figlet from 'figlet';
 
-// 🎯 Config
+// CONFIG
 const RPC_URL = 'https://carrot.megaeth.com/rpc';
-const TARGET_ADDRESS = '0xf6c206788597D497dBE431898A18daB5bc4dC60A';
-const provider = new ethers.JsonRpcProvider(RPC_URL);
+const EXPLORER_TX = 'https://megaexplorer.xyz/tx/';
+const CHAIN_ID = 6342;
+const SHARD_SIZE = 50; // Process wallets in chunks
 
-// 📂 Load wallets
-const wallets = JSON.parse(fs.readFileSync('./wallets.json', 'utf-8'));
+// Read from file
+function readLines(path) {
+  return fs.readFileSync(path, 'utf-8')
+    .split('\n')
+    .map(line => line.trim())
+    .filter(line => line.length > 0);
+}
 
-// 💡 Stats
-let success = 0, failed = 0, skipped = 0;
+function getShards(wallets, size) {
+  const shards = [];
+  for (let i = 0; i < wallets.length; i += size) {
+    shards.push(wallets.slice(i, i + size));
+  }
+  return shards;
+}
 
-// 🎬 Fancy banner
-console.log(chalk.cyan(figlet.textSync("MEGA ETH", { font: "Slant" })));
-console.log(chalk.green.bold("🚀 Starting MEGA ETH Consolidation"));
-console.log(`📌 ${chalk.yellow("Chain ID")}: 6342`);
-console.log(`🎯 ${chalk.yellow("Target Address")}: ${TARGET_ADDRESS}`);
-console.log(`🔑 ${chalk.yellow("Wallets to process")}: ${wallets.length}`);
-console.log(`\n✅ Connected to ${RPC_URL}\n`);
+async function sendAll(wallets, target, provider) {
+  let success = 0, fail = 0, skipped = 0;
 
-// 📊 Progress bar setup
-const bar = new cliProgress.SingleBar({
-  format: `${chalk.magenta('Progress')} [{bar}] {percentage}% | {value}/{total} wallets`,
-  barCompleteChar: '\u2588',
-  barIncompleteChar: '\u2591',
-  hideCursor: true
-}, cliProgress.Presets.shades_classic);
+  for (let index = 0; index < wallets.length; index++) {
+    const key = wallets[index];
+    const spinner = ora(`🔐 Wallet [${index + 1}/${wallets.length}]`).start();
 
-bar.start(wallets.length, 0);
+    try {
+      const wallet = new ethers.Wallet(key, provider);
+      const balance = await provider.getBalance(wallet.address);
 
-// 🔁 Wallet Processor
-async function processWallet(index, walletData) {
-  const { privateKey } = walletData;
-  const wallet = new ethers.Wallet(privateKey, provider);
-  const spinner = ora(`🔍 [${index + 1}] Checking ${wallet.address}`).start();
+      if (balance.eq(0)) {
+        spinner.warn(`⏩ ${wallet.address} | Skipped - zero balance`);
+        skipped++;
+        continue;
+      }
 
-  try {
-    const balance = await provider.getBalance(wallet.address);
-    const ethBalance = parseFloat(ethers.formatEther(balance));
+      const gasPrice = await provider.getGasPrice();
+      const gasLimit = 21000n;
+      const fee = gasPrice * gasLimit;
 
-    spinner.text = `💰 Balance: ${chalk.yellow(ethBalance.toFixed(5))} ETH`;
-
-    if (ethBalance > 0.002) {
-      const valueToSend = ethBalance - 0.001;
-      spinner.text = `💸 Sending ${valueToSend.toFixed(5)} ETH...`;
+      if (balance <= fee) {
+        spinner.warn(`⚠️ ${wallet.address} | Not enough ETH for gas`);
+        skipped++;
+        continue;
+      }
 
       const tx = await wallet.sendTransaction({
-        to: TARGET_ADDRESS,
-        value: ethers.parseEther(valueToSend.toString())
+        to: target,
+        value: balance - fee,
+        gasLimit,
+        gasPrice
       });
 
-      await tx.wait();
+      const receipt = await tx.wait();
+      const link = `${EXPLORER_TX}${receipt.transactionHash}`;
+      const block = receipt.blockNumber;
 
-      spinner.succeed(`✅ ${wallet.address}\n   💸 Sent: ${chalk.green(valueToSend.toFixed(5))} ETH\n   🔗 Tx Link: ${chalk.blue.underline(`https://megaexplorer.xyz/tx/${tx.hash}`)}\n   🧾 Block: ${chalk.yellow(tx.blockNumber)}`);
+      spinner.succeed(`${chalk.green('✅')} ${wallet.address}
+   💸 Sent:        ${ethers.formatEther(balance - fee)} ETH
+   🔗 Tx Link:     ${link}
+   🧾 Block:       ${block}
+   💼 Remaining:   ${ethers.formatEther(await provider.getBalance(wallet.address))} ETH`);
+
       success++;
-    } else {
-      spinner.warn(`⚠️ ${wallet.address} | Skipped - low balance (${ethBalance.toFixed(5)} ETH)`);
-      skipped++;
+
+    } catch (err) {
+      spinner.fail(`❌ ${wallets[index].slice(0, 12)}... | Error: ${err.message}`);
+      fail++;
     }
-  } catch (err) {
-    spinner.fail(`❌ ${wallet.address} | ${chalk.red(err.message)}`);
-    failed++;
   }
 
-  bar.increment();
+  return { success, fail, skipped };
 }
 
-// 🚀 Start processing
-async function main() {
-  for (let i = 0; i < wallets.length; i++) {
-    await processWallet(i, wallets[i]);
+async function consolidateWallets() {
+  console.log(chalk.cyan(figlet.textSync('MEGA ETH', { horizontalLayout: 'fitted' })));
+  console.log(chalk.yellow('🚀 Starting MEGA ETH Consolidation'));
+  console.log(chalk.gray(`📌 Chain ID: ${CHAIN_ID}`));
+
+  const wallets = readLines('private_keys.txt');
+  const target = readLines('target_address.txt')[0];
+
+  console.log(`🎯 Target Address: ${chalk.green(target)}`);
+  console.log(`🔑 Wallets to process: ${wallets.length}\n`);
+
+  const provider = new ethers.JsonRpcProvider(RPC_URL);
+  console.log(chalk.green(`✅ Connected to ${RPC_URL}\n`));
+
+  const shards = getShards(wallets, SHARD_SIZE);
+  let totals = { success: 0, fail: 0, skipped: 0 };
+
+  for (let i = 0; i < shards.length; i++) {
+    console.log(chalk.blue(`📦 Shard ${i + 1}/${shards.length}`));
+    const result = await sendAll(shards[i], target, provider);
+    totals.success += result.success;
+    totals.fail += result.fail;
+    totals.skipped += result.skipped;
   }
 
-  bar.stop();
-
-  console.log(`\n✨ ${chalk.bold("Done!")}`);
-  console.log(`${chalk.green("✅ Success")}: ${success}`);
-  console.log(`${chalk.red("❌ Failed")}: ${failed}`);
-  console.log(`${chalk.yellow("⏩ Skipped")}: ${skipped}\n`);
+  console.log(chalk.bold.green('\n✨ Done!'));
+  console.log(`✅ Success: ${totals.success}`);
+  console.log(`❌ Failed: ${totals.fail}`);
+  console.log(`⏩ Skipped: ${totals.skipped}`);
 }
 
-main();
+consolidateWallets();
