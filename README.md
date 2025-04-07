@@ -12,9 +12,16 @@ cd megaeth-faucet-sender
 ```bash
 pip install -r requirements.txt
 ```
+Add PrivateKeys
 ```bash
-private_keys.txt
+nano private_keys.txt
 ```
+
+Add Target Address
+```bash
+nano target_address.txt
+```
+RUN : 
 ```bash
 python bot.py
 ```
