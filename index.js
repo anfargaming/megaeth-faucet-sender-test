@@ -249,7 +249,7 @@ async function main() {
     }
 
     logBox.log('{green-fg}\n✨ All transactions completed!{/}');
-    // Do not call gracefulShutdown or exit here; let the screen persist
+    // Keep the screen alive; no automatic shutdown
   } catch (err) {
     console.error(chalk.red('Processing error:'), err.message);
     gracefulShutdown(1);
@@ -274,7 +274,10 @@ process.on('SIGINT', () => gracefulShutdown(0));
 console.log(chalk.blue('Script starting...'));
 main();
 
-// Keep the event loop running to maintain the UI
-screen && screen.on('idle', () => {
-  screen.render();
-});
+// Ensure the event loop keeps running
+if (screen) {
+  screen.on('idle', () => {
+    screen.render(); // Keep rendering to maintain UI
+  });
+  screen.appendTo(process.stdout); // Ensure screen is attached to output
+}
