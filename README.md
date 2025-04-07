@@ -4,7 +4,7 @@ A simple tool to consolidate testnet ETH from multiple wallets to a single addre
 
 ## Setup
 
-1. Install requirements:
+🔰 Install requirements:
 ```bash
 git clone https://github.com/anfargaming/megaeth-faucet-sender
 cd megaeth-faucet-sender
@@ -12,16 +12,18 @@ cd megaeth-faucet-sender
 ```bash
 pip install -r requirements.txt
 ```
-Add PrivateKeys
+
+🔰 Add PrivateKeys
 ```bash
 nano private_keys.txt
 ```
 
-Add Target Address
+🔰Add Target Address
 ```bash
 nano target_address.txt
 ```
-RUN : 
+
+🔶 RUN : 
 ```bash
 python bot.py
 ```
@@ -49,7 +51,7 @@ python bot.py
 To use this, just:
 1. Put your private keys in `private_keys.txt`
 2. Put your target address in `target_address.txt`
-3. Run `python consolidate.py`
+3. Run `python bot.py`
 
 The script will automatically:
 - Check each wallet's balance
