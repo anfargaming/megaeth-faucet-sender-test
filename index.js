@@ -1,5 +1,5 @@
 import fs from 'fs';
-import ethers from 'ethers';
+import * as ethers from 'ethers';
 import figlet from 'figlet';
 import chalk from 'chalk';
 import ora from 'ora';
