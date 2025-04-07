@@ -1,69 +1,199 @@
 import os
 import time
 import csv
+import tkinter as tk
+from tkinter import ttk, scrolledtext
 from concurrent.futures import ThreadPoolExecutor
 from web3 import Web3
 from web3.exceptions import TransactionNotFound
 from dotenv import load_dotenv
-from colorama import init, Fore, Back, Style
+import threading
+from PIL import Image, ImageTk
 
-# Initialize colorama
-init(autoreset=True)
 load_dotenv()
 
-class MegaEthSender:
-    def __init__(self):
-        # MEGA Testnet configuration
-        self.rpc_endpoints = [
-            'https://carrot.megaeth.com/rpc',
-            'https://rpc.testnet.megaeth.com',
-            'https://testnet.megaeth.io/rpc'
+class MegaEthSenderGUI:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("MEGA ETH Sender Pro")
+        self.root.geometry("900x700")
+        self.root.configure(bg="#2c3e50")
+        
+        # Setup UI
+        self.setup_ui()
+        
+        # Initialize sender
+        self.sender = MegaEthSender(self.update_ui_callback)
+        
+    def setup_ui(self):
+        # Header Frame
+        header_frame = tk.Frame(self.root, bg="#3498db", height=100)
+        header_frame.pack(fill="x", padx=10, pady=10)
+        
+        # Logo and Title
+        try:
+            img = Image.open("logo.png").resize((80, 80))
+            self.logo = ImageTk.PhotoImage(img)
+            logo_label = tk.Label(header_frame, image=self.logo, bg="#3498db")
+            logo_label.pack(side="left", padx=20)
+        except:
+            pass
+        
+        title = tk.Label(header_frame, text="MEGA ETH Sender Pro", 
+                        font=("Helvetica", 20, "bold"), 
+                        fg="white", bg="#3498db")
+        title.pack(side="left", pady=20)
+        
+        # Network Info Frame
+        info_frame = tk.Frame(self.root, bg="#34495e", padx=10, pady=10)
+        info_frame.pack(fill="x", padx=10, pady=5)
+        
+        tk.Label(info_frame, text="Network:", font=("Helvetica", 10), 
+                fg="white", bg="#34495e").pack(side="left")
+        self.network_label = tk.Label(info_frame, text="MEGA Testnet (Chain ID: 6342)", 
+                                    font=("Helvetica", 10, "bold"), 
+                                    fg="#2ecc71", bg="#34495e")
+        self.network_label.pack(side="left", padx=5)
+        
+        # Progress Frame
+        progress_frame = tk.Frame(self.root, bg="#2c3e50")
+        progress_frame.pack(fill="x", padx=10, pady=10)
+        
+        self.progress = ttk.Progressbar(progress_frame, orient="horizontal", 
+                                      length=400, mode="determinate")
+        self.progress.pack(side="left", expand=True)
+        
+        self.status_label = tk.Label(progress_frame, text="Ready", 
+                                   font=("Helvetica", 10), 
+                                   fg="white", bg="#2c3e50")
+        self.status_label.pack(side="left", padx=10)
+        
+        # Console Output
+        console_frame = tk.Frame(self.root, bg="#2c3e50")
+        console_frame.pack(fill="both", expand=True, padx=10, pady=5)
+        
+        self.console = scrolledtext.ScrolledText(console_frame, 
+                                                width=100, 
+                                                height=20,
+                                                font=("Consolas", 10),
+                                                bg="#1e272e",
+                                                fg="#ecf0f1",
+                                                insertbackground="white")
+        self.console.pack(fill="both", expand=True)
+        
+        # Action Buttons
+        button_frame = tk.Frame(self.root, bg="#2c3e50")
+        button_frame.pack(fill="x", padx=10, pady=10)
+        
+        self.start_btn = tk.Button(button_frame, text="Start Sending", 
+                                  command=self.start_sending,
+                                  font=("Helvetica", 12),
+                                  bg="#27ae60", fg="white",
+                                  activebackground="#2ecc71",
+                                  activeforeground="white")
+        self.start_btn.pack(side="left", padx=5)
+        
+        tk.Button(button_frame, text="Clear Console", 
+                 command=self.clear_console,
+                 font=("Helvetica", 12),
+                 bg="#e74c3c", fg="white",
+                 activebackground="#c0392b",
+                 activeforeground="white").pack(side="left", padx=5)
+        
+        # Stats Frame
+        stats_frame = tk.Frame(self.root, bg="#34495e", padx=10, pady=10)
+        stats_frame.pack(fill="x", padx=10, pady=5)
+        
+        stats = [
+            ("Total Wallets:", "total_wallets"),
+            ("Processed:", "processed"),
+            ("Successful:", "successful"),
+            ("Failed:", "failed"),
+            ("ETH Sent:", "eth_sent")
         ]
+        
+        for text, var_name in stats:
+            frame = tk.Frame(stats_frame, bg="#34495e")
+            frame.pack(side="left", expand=True)
+            
+            tk.Label(frame, text=text, font=("Helvetica", 10), 
+                    fg="white", bg="#34495e").pack()
+            
+            setattr(self, var_name, tk.Label(frame, text="0", 
+                                            font=("Helvetica", 12, "bold"), 
+                                            fg="#f39c12", bg="#34495e"))
+            getattr(self, var_name).pack()
+    
+    def update_ui_callback(self, message, msg_type="info"):
+        self.root.after(0, self.update_console, message, msg_type)
+        
+    def update_console(self, message, msg_type="info"):
+        color_map = {
+            "success": "#2ecc71",
+            "error": "#e74c3c",
+            "warning": "#f39c12",
+            "info": "#3498db"
+        }
+        
+        self.console.tag_config(msg_type, foreground=color_map.get(msg_type, "#ecf0f1"))
+        self.console.insert("end", message + "\n", msg_type)
+        self.console.see("end")
+        self.root.update()
+    
+    def clear_console(self):
+        self.console.delete(1.0, "end")
+    
+    def start_sending(self):
+        self.start_btn.config(state="disabled")
+        threading.Thread(target=self.run_sender, daemon=True).start()
+    
+    def run_sender(self):
+        try:
+            self.update_console("\n=== Starting ETH Sending Process ===\n", "info")
+            self.sender.run()
+        except Exception as e:
+            self.update_console(f"\nFatal error: {str(e)}\n", "error")
+        finally:
+            self.start_btn.config(state="normal")
+
+class MegaEthSender:
+    def __init__(self, ui_callback):
+        self.ui_callback = ui_callback
+        self.rpc_endpoints = ['https://carrot.megaeth.com/rpc']
         self.chain_id = 6342
         self.max_fee_per_gas = Web3.to_wei(0.0025, 'gwei')
         self.max_priority_fee_per_gas = Web3.to_wei(0.001, 'gwei')
         
-        # UI Configuration
-        self.ui_width = 60
-        self.colors = {
-            "success": Fore.GREEN + Style.BRIGHT,
-            "error": Fore.RED + Style.BRIGHT,
-            "warning": Fore.YELLOW + Style.BRIGHT,
-            "info": Fore.CYAN,
-            "header": Fore.MAGENTA + Style.BRIGHT,
-            "highlight": Fore.WHITE + Style.BRIGHT + Back.BLUE
-        }
-        
-        # Initialize connection
         self.w3 = self._connect_to_provider()
-        
-        # Load addresses
         self.target_address = self._load_target_address()
         self.private_keys = self._load_private_keys()
+        
+        # Stats
+        self.total_wallets = len(self.private_keys)
+        self.processed = 0
+        self.successful = 0
+        self.failed = 0
+        self.eth_sent = 0.0
 
     def _connect_to_provider(self):
-        """Connect to RPC with retries"""
-        self._print_ui_box("Connecting to MEGA Testnet")
         for endpoint in self.rpc_endpoints:
             try:
                 w3 = Web3(Web3.HTTPProvider(endpoint))
                 if w3.is_connected():
-                    self._print_status(f"✓ Connected to {endpoint}", "success")
+                    self.ui_callback(f"✓ Connected to {endpoint}", "success")
                     return w3
             except Exception as e:
-                self._print_status(f"⚠ Connection failed to {endpoint}", "warning")
-        raise ConnectionError(self._format_message("✗ Could not connect to any RPC endpoint", "error"))
+                self.ui_callback(f"⚠ Connection failed to {endpoint}: {str(e)}", "warning")
+        raise ConnectionError("Could not connect to any RPC endpoint")
 
     def _load_target_address(self):
-        """Load and validate target address"""
         with open('target_address.txt', 'r') as f:
             address = f.read().strip()
-        if not self.w3.is_address(address):
-            raise ValueError(self._format_message("Invalid target address", "error"))
+        if not Web3.is_address(address):
+            raise ValueError("Invalid target address")
         return address
 
     def _load_private_keys(self):
-        """Load private keys from file"""
         keys = []
         with open('private_keys.txt', 'r') as f:
             for line in f:
@@ -71,66 +201,35 @@ class MegaEthSender:
                 if line:
                     keys.append(line)
         if not keys:
-            raise ValueError(self._format_message("No private keys found", "error"))
+            raise ValueError("No private keys found")
         return keys
 
-    def _format_message(self, message, msg_type="info"):
-        """Format colored message"""
-        return f"{self.colors.get(msg_type, '')}{message}{Style.RESET_ALL}"
-
-    def _print_status(self, message, msg_type="info"):
-        """Print status message with colored prefix"""
-        symbols = {
-            "success": "✓",
-            "error": "✗",
-            "warning": "⚠",
-            "info": "•"
-        }
-        print(f"{self.colors.get(msg_type, '')}{symbols.get(msg_type, '')} {message}{Style.RESET_ALL}")
-
-    def _print_ui_box(self, title):
-        """Print boxed UI element"""
-        print(f"\n{self.colors['header']}{'=' * self.ui_width}")
-        print(f"{title.center(self.ui_width)}")
-        print(f"{'=' * self.ui_width}{Style.RESET_ALL}\n")
-
-    def get_balance(self, address):
-        """Get balance with retries"""
-        for attempt in range(3):
-            try:
-                balance_wei = self.w3.eth.get_balance(address)
-                return float(self.w3.from_wei(balance_wei, 'ether'))
-            except Exception as e:
-                if attempt == 2:
-                    raise
-                time.sleep(2 ** attempt)
-                self.w3 = self._connect_to_provider()
-
     def transfer_eth(self, private_key):
-        """Process single wallet transfer"""
         account = self.w3.eth.account.from_key(private_key)
         address = account.address
         
         try:
             # Get balance
-            balance = self.get_balance(address)
-            if balance <= 0:
-                self._print_status(f"{address[:8]}...{address[-6:]} - Zero balance", "warning")
+            balance_wei = self.w3.eth.get_balance(address)
+            balance_eth = float(Web3.from_wei(balance_wei, 'ether'))
+            
+            if balance_eth <= 0:
+                self.ui_callback(f"{address[:8]}...{address[-6:]} - Zero balance", "warning")
                 return None
             
-            # Calculate transfer amount (dynamic gas calculation)
-            gas_cost = self.w3.from_wei(21000 * self.max_fee_per_gas, 'ether')
-            amount_to_send = max(balance - gas_cost, 0)
+            # Calculate transfer amount
+            gas_cost = float(Web3.from_wei(21000 * self.max_fee_per_gas, 'ether'))
+            amount_to_send = max(balance_eth - gas_cost, 0)
             
             if amount_to_send <= 0:
-                self._print_status(f"{address[:8]}...{address[-6:]} - Insufficient balance (needs {gas_cost:.6f} ETH for gas)", "warning")
+                self.ui_callback(f"{address[:8]}...{address[-6:]} - Insufficient balance", "warning")
                 return None
             
             # Prepare transaction
             tx = {
                 'nonce': self.w3.eth.get_transaction_count(address),
                 'to': self.target_address,
-                'value': self.w3.to_wei(amount_to_send, 'ether'),
+                'value': Web3.to_wei(amount_to_send, 'ether'),
                 'gas': 21000,
                 'maxFeePerGas': self.max_fee_per_gas,
                 'maxPriorityFeePerGas': self.max_priority_fee_per_gas,
@@ -138,42 +237,30 @@ class MegaEthSender:
                 'type': '0x2'
             }
             
-            # Send transaction with retries
-            for attempt in range(3):
-                try:
-                    signed_tx = self.w3.eth.account.sign_transaction(tx, private_key)
-                    tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
-                    receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
-                    
-                    # Log transaction
-                    with open('transactions.csv', 'a', newline='') as f:
-                        writer = csv.writer(f)
-                        writer.writerow([address, balance, amount_to_send, tx_hash.hex()])
-                    
-                    self._print_status(
-                        f"{address[:8]}...{address[-6:]} - Sent {amount_to_send:.6f} ETH | TX: {tx_hash.hex()}",
-                        "success"
-                    )
-                    return tx_hash.hex()
-                
-                except Exception as e:
-                    if attempt == 2:
-                        raise
-                    time.sleep(2 ** attempt)
+            # Send transaction
+            signed_tx = self.w3.eth.account.sign_transaction(tx, private_key)
+            tx_hash = self.w3.eth.send_raw_transaction(signed_tx.rawTransaction)
+            receipt = self.w3.eth.wait_for_transaction_receipt(tx_hash, timeout=120)
+            
+            # Update stats
+            self.eth_sent += amount_to_send
+            
+            # Log transaction
+            with open('transactions.csv', 'a', newline='') as f:
+                writer = csv.writer(f)
+                writer.writerow([address, balance_eth, amount_to_send, tx_hash.hex()])
+            
+            self.ui_callback(f"{address[:8]}...{address[-6:]} - Sent {amount_to_send:.6f} ETH", "success")
+            return tx_hash.hex()
         
         except Exception as e:
             with open('errors.log', 'a') as f:
                 f.write(f"{address},{str(e)}\n")
-            self._print_status(f"{address[:8]}...{address[-6:]} - Error: {str(e)}", "error")
+            self.ui_callback(f"{address[:8]}...{address[-6:]} - Error: {str(e)}", "error")
             return None
 
     def run(self):
-        """Main execution with parallel processing"""
-        # Print header
-        self._print_ui_box("MEGA ETH SENDER")
-        print(f"{self.colors['header']}• Target:{Style.RESET_ALL} {self.target_address}")
-        print(f"{self.colors['header']}• Wallets:{Style.RESET_ALL} {len(self.private_keys)}")
-        print(f"{self.colors['header']}• Network:{Style.RESET_ALL} MEGA Testnet (Chain ID: {self.chain_id})")
+        start_time = time.time()
         
         # Initialize CSV
         with open('transactions.csv', 'w', newline='') as f:
@@ -181,28 +268,23 @@ class MegaEthSender:
             writer.writerow(['Address', 'Balance', 'Amount Sent', 'TxHash'])
         
         # Process wallets
-        start_time = time.time()
-        successful = 0
-        
         with ThreadPoolExecutor(max_workers=5) as executor:
-            results = executor.map(self.transfer_eth, self.private_keys)
-            successful = sum(1 for result in results if result is not None)
+            results = list(executor.map(self.transfer_eth, self.private_keys))
         
-        # Print summary
+        # Calculate stats
+        self.successful = sum(1 for result in results if result is not None)
+        self.failed = len(self.private_keys) - self.successful
         elapsed = time.time() - start_time
-        self._print_ui_box("TRANSACTION SUMMARY")
-        print(f"{self.colors['success']}✓ Successful:{Style.RESET_ALL} {successful}")
-        print(f"{self.colors['error'] if successful != len(self.private_keys) else self.colors['success']}✗ Failed:{Style.RESET_ALL} {len(self.private_keys) - successful}")
-        print(f"{self.colors['info']}⏱ Time:{Style.RESET_ALL} {elapsed:.2f} seconds")
         
-        if successful > 0:
-            print(f"\n{self.colors['highlight']} Transactions saved to: transactions.csv {Style.RESET_ALL}")
-        if successful != len(self.private_keys):
-            print(f"\n{self.colors['highlight']} Errors logged to: errors.log {Style.RESET_ALL}")
+        # Final report
+        self.ui_callback("\n=== Transaction Summary ===", "info")
+        self.ui_callback(f"Total Wallets: {len(self.private_keys)}", "info")
+        self.ui_callback(f"Successful: {self.successful}", "success")
+        self.ui_callback(f"Failed: {self.failed}", "error" if self.failed > 0 else "success")
+        self.ui_callback(f"ETH Sent: {self.eth_sent:.6f}", "info")
+        self.ui_callback(f"Time: {elapsed:.2f} seconds", "info")
 
 if __name__ == "__main__":
-    try:
-        sender = MegaEthSender()
-        sender.run()
-    except Exception as e:
-        print(f"\n{Fore.RED + Style.BRIGHT}✗ Fatal error: {str(e)}{Style.RESET_ALL}")
+    root = tk.Tk()
+    app = MegaEthSenderGUI(root)
+    root.mainloop()
