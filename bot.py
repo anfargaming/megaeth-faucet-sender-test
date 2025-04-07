@@ -35,7 +35,7 @@ class MegaEthSender:
     def _connect_to_provider(self):
         for endpoint in self.rpc_endpoints:
             try:
-                w3 = Web3(WebWeb.HTTPProvider(endpoint))
+                w3 = Web3(Web3.HTTPProvider(endpoint))  # Fixed typo: WebWeb to Web3
                 if w3.is_connected():
                     self.ui_callback(f"Connected to {endpoint}", "success")
                     return w3
