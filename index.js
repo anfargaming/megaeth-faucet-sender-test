@@ -28,10 +28,13 @@ let isShuttingDown = false;
 
 // ====== Load Keys & Target ======
 function loadFiles() {
-  console.log(chalk.blue('Loading files...'));
+  console.log(chalk.blue('Step 1: Loading files...'));
   try {
-    if (!fs.existsSync('private_keys.txt') || !fs.existsSync('target_address.txt')) {
-      throw new Error('Required input files missing');
+    if (!fs.existsSync('private_keys.txt')) {
+      throw new Error('private_keys.txt not found');
+    }
+    if (!fs.existsSync('target_address.txt')) {
+      throw new Error('target_address.txt not found');
     }
     
     privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
@@ -41,22 +44,23 @@ function loadFiles() {
     
     targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
 
-    if (!privateKeys.length) throw new Error('No valid private keys found');
-    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address');
-    console.log(chalk.green('Files loaded successfully'));
+    if (!privateKeys.length) throw new Error('No valid private keys found in private_keys.txt');
+    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address in target_address.txt');
+    
+    console.log(chalk.green(`Successfully loaded ${privateKeys.length} keys and target address: ${targetAddress}`));
     return true;
   } catch (err) {
-    console.error(chalk.red('❌ Initialization failed:'), err.message);
+    console.error(chalk.red('❌ File loading failed:'), err.message);
     return false;
   }
 }
 
 // ====== Terminal UI Setup ======
 function initUI() {
-  console.log(chalk.blue('Initializing UI...'));
+  console.log(chalk.blue('Step 2: Initializing UI...'));
   if (!process.stdout.isTTY) {
-    console.error(chalk.red('Error: Interactive terminal required'));
-    process.exit(1);
+    console.error(chalk.red('Error: Interactive terminal required (no TTY detected)'));
+    return false;
   }
 
   try {
@@ -70,8 +74,10 @@ function initUI() {
       title: 'MegaETH Dashboard'
     });
 
+    console.log(chalk.blue('Creating grid...'));
     grid = new contrib.grid({ rows: 12, cols: 12, screen });
 
+    console.log(chalk.blue('Setting up donut...'));
     donut = grid.set(0, 0, 4, 4, contrib.donut, {
       label: ' Status ',
       radius: 16,
@@ -83,12 +89,14 @@ function initUI() {
       ]
     });
 
+    console.log(chalk.blue('Setting up line graph...'));
     line = grid.set(0, 4, 4, 8, contrib.line, {
       label: ' ETH Flow ',
       showLegend: true,
       legend: { width: 12 }
     });
 
+    console.log(chalk.blue('Setting up table...'));
     table = grid.set(4, 0, 4, 12, contrib.table, {
       label: ' Wallet Balances ',
       columnWidth: [25, 15, 12, 18, 14],
@@ -100,6 +108,7 @@ function initUI() {
       columns: ['Address', 'Balance', 'Status', 'Tx Hash', 'Time']
     });
 
+    console.log(chalk.blue('Setting up log box...'));
     logBox = grid.set(8, 0, 4, 12, blessed.log, {
       label: ' Live Logs ',
       border: { type: 'line' },
@@ -109,17 +118,20 @@ function initUI() {
       tags: true
     });
 
+    console.log(chalk.blue('Binding keys...'));
     screen.key(['q', 'C-c', 'escape'], () => {
       if (!isShuttingDown) gracefulShutdown();
     });
 
-    screen.on('render', () => console.log(chalk.blue('Screen rendered')));
+    screen.on('render', () => console.log(chalk.green('Screen rendered successfully')));
     screen.on('error', (err) => console.error(chalk.red('Screen error:'), err));
-    screen.render(); // Initial render
+    console.log(chalk.blue('Rendering initial screen...'));
+    screen.render();
     console.log(chalk.green('UI initialized successfully'));
+    return true;
   } catch (err) {
     console.error(chalk.red('UI initialization failed:'), err.message);
-    process.exit(1);
+    return false;
   }
 }
 
@@ -152,10 +164,11 @@ function gracefulShutdown(code = 0) {
   if (isShuttingDown) return;
   isShuttingDown = true;
 
-  console.log(chalk.blue('Initiating shutdown...'));
+  console.log(chalk.blue('Initiating shutdown with code:', code));
   try {
     if (progressBar) {
       progressBar.stop();
+      console.log(chalk.blue('Progress bar stopped'));
     }
     if (screen) {
       screen.program.clear();
@@ -252,6 +265,7 @@ async function processWallet(pk, index) {
 
 // ====== Main ======
 async function main() {
+  console.log(chalk.blue('Starting main execution...'));
   if (!loadFiles()) {
     gracefulShutdown(1);
     return;
@@ -259,7 +273,7 @@ async function main() {
 
   provider = new ethers.JsonRpcProvider(config.rpcUrl);
   try {
-    console.log(chalk.blue('Connecting to RPC...'));
+    console.log(chalk.blue('Step 3: Connecting to RPC...'));
     await provider.ready;
     console.log(chalk.green('RPC connected'));
   } catch (err) {
@@ -272,7 +286,10 @@ async function main() {
   console.log(chalk.green(`🚀 Consolidating to ${targetAddress}`));
   console.log(`🔑 Wallets: ${privateKeys.length}\n`);
 
-  initUI();
+  if (!initUI()) {
+    gracefulShutdown(1);
+    return;
+  }
 
   progressBar = new cliProgress.SingleBar({
     format: '{bar} | {percentage}% | {value}/{total} wallets',
@@ -280,6 +297,7 @@ async function main() {
     barIncompleteChar: '░'
   }, cliProgress.Presets.shades_classic);
 
+  console.log(chalk.blue('Step 4: Starting wallet processing...'));
   progressBar.start(privateKeys.length, 0);
 
   try {
@@ -291,7 +309,6 @@ async function main() {
 
     progressBar.stop();
     logBox.log('{green-fg}\n✨ All transactions completed!{/}');
-    // Don't auto-exit, let user view dashboard
     logBox.log('{yellow-fg}Press q, Ctrl+C, or Esc to exit{/}');
   } catch (err) {
     console.error(chalk.red('Processing error:'), err.message);
@@ -314,4 +331,5 @@ process.on('SIGTERM', () => gracefulShutdown(0));
 process.on('SIGINT', () => gracefulShutdown(0));
 
 // ====== Start ======
+console.log(chalk.blue('Script starting...'));
 main();
