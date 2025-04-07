@@ -6,6 +6,10 @@ A simple tool to consolidate testnet ETH from multiple wallets to a single addre
 
 1. Install requirements:
 ```bash
+git clone https://github.com/anfargaming/megaeth-faucet-sender
+cd megaeth-faucet-sender
+```
+```bash
 pip install -r requirements.txt
 ```
 ```bash
