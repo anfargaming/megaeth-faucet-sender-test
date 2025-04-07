@@ -53,7 +53,7 @@ const donut = grid.set(0, 6, 6, 6, contrib.donut, {
   radius: 16,
   arcWidth: 4,
   yPadding: 2,
-  data: []
+  data: [] // Clear content
 });
 
 const walletTable = grid.set(6, 0, 5, 12, contrib.table, {
@@ -94,30 +94,29 @@ async function sendETH(privateKey, index) {
       logBox.log("  Skipping - insufficient balance");
       failed++;
       tableData.push([address, "0", "Failed", "Insufficient"]);
-      return;
+    } else {
+      const amount = balance - 0.001;
+      const nonce = await provider.getTransactionCount(address);
+
+      const tx = await wallet.sendTransaction({
+        to: targetAddress,
+        value: ethers.parseEther(amount.toFixed(6)),
+        nonce,
+        gasLimit: 21000,
+        maxFeePerGas,
+        maxPriorityFeePerGas,
+        chainId,
+        type: 2
+      });
+
+      const explorerUrl = `https://explorer.megaeth.com/tx/${tx.hash}`;
+      logBox.log(`  Sending: ${amount.toFixed(6)} ETH`);
+      logBox.log(`  TX Hash: ${tx.hash}`);
+      logBox.log(`  Explorer: ${explorerUrl}`);
+
+      tableData.push([address, amount.toFixed(6), "Success", explorerUrl]);
+      success++;
     }
-
-    const amount = balance - 0.001;
-    const nonce = await provider.getTransactionCount(address);
-
-    const tx = await wallet.sendTransaction({
-      to: targetAddress,
-      value: ethers.parseEther(amount.toFixed(6)),
-      nonce,
-      gasLimit: 21000,
-      maxFeePerGas,
-      maxPriorityFeePerGas,
-      chainId,
-      type: 2
-    });
-
-    const explorerUrl = `https://explorer.megaeth.com/tx/${tx.hash}`;
-    logBox.log(`  Sending: ${amount.toFixed(6)} ETH`);
-    logBox.log(`  TX Hash: ${tx.hash}`);
-    logBox.log(`  Explorer: ${explorerUrl}`);
-
-    tableData.push([address, amount.toFixed(6), "Success", explorerUrl]);
-    success++;
   } catch (err) {
     logBox.log(`  Error: ${err.message}`);
     failed++;
@@ -129,7 +128,7 @@ async function sendETH(privateKey, index) {
     data: tableData
   });
 
-  donut.setData([]); // clear donut content
+  donut.setData([]); // Keep chart blank
   screen.render();
 }
 
