@@ -9,114 +9,183 @@ import cliProgress from 'cli-progress';
 import os from 'os';
 import cluster from 'cluster';
 
-// ====== Load Configuration ======
-const rpcUrl = 'https://carrot.megaeth.com/rpc';
-const provider = new ethers.JsonRpcProvider(rpcUrl);
-const chainId = 6342;
+// ====== Configuration ======
+const config = {
+  rpcUrl: 'https://carrot.megaeth.com/rpc',
+  chainId: 6342,
+  minBalance: '0.002', // Minimum balance to process (ETH)
+  gasBuffer: 1.2, // 20% gas buffer
+  maxWorkers: os.cpus().length,
+  refreshInterval: 15000 // Dashboard refresh in ms
+};
 
-// Read files with error handling
+// ====== Initialize ======
+let provider;
 let privateKeys = [];
 let targetAddress = '';
-try {
-  privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
-    .split('\n')
-    .map(line => line.trim())
-    .filter(Boolean);
-  targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
-} catch (err) {
-  console.error(chalk.red('Error reading input files:'), err.message);
-  process.exit(1);
-}
-
-const totalWallets = privateKeys.length;
-if (totalWallets === 0) {
-  console.error(chalk.red('No private keys found in private_keys.txt'));
-  process.exit(1);
-}
-
-const numCPUs = os.cpus().length;
-
-// ====== Terminal UI Setup ======
-const screen = blessed.screen();
-const grid = new contrib.grid({ rows: 12, cols: 12, screen });
-const logBox = grid.set(8, 0, 4, 12, blessed.log, { 
-  label: 'Live Logs', 
-  border: 'line', 
-  scrollable: true 
-});
-const donut = grid.set(0, 0, 4, 4, contrib.donut, { 
-  label: 'Success/Fail', 
-  radius: 16 
-});
-const line = grid.set(0, 4, 4, 8, contrib.line, { 
-  label: 'ETH Flow' 
-});
-const table = grid.set(4, 0, 4, 12, contrib.table, {
-  keys: true,
-  label: 'Wallet Balances',
-  columnWidth: [25, 15, 12, 18, 14]
-});
-
+let screen, grid, logBox, donut, line, table;
 let ethFlowData = { x: [], y: [] };
 let success = 0, failed = 0, skipped = 0;
-screen.render();
+let progressBar;
+
+// ====== Helper Functions ======
+function loadFiles() {
+  try {
+    privateKeys = fs.readFileSync('private_keys.txt', 'utf-8')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(Boolean);
+      
+    targetAddress = fs.readFileSync('target_address.txt', 'utf-8').trim();
+    
+    if (privateKeys.length === 0) throw new Error('No private keys found');
+    if (!ethers.isAddress(targetAddress)) throw new Error('Invalid target address');
+    
+    return true;
+  } catch (err) {
+    console.error(chalk.red('Initialization failed:'), err.message);
+    return false;
+  }
+}
 
 function clusterWallets(keys) {
   const clusters = {};
-  for (const key of keys) {
-    const prefix = key.slice(2, 6);
-    if (!clusters[prefix]) clusters[prefix] = [];
+  keys.forEach(key => {
+    const prefix = key.slice(2, 6); // Cluster by key prefix
+    clusters[prefix] = clusters[prefix] || [];
     clusters[prefix].push(key);
-  }
+  });
   return Object.values(clusters);
+}
+
+function initUI() {
+  screen = blessed.screen({
+    smartCSR: true,
+    dockBorders: true,
+    fullUnicode: true,
+    warnings: true
+  });
+
+  // Error handlers
+  screen.program.on('error', err => console.error('Terminal error:', err));
+  screen.on('error', err => console.error('Screen error:', err));
+
+  grid = new contrib.grid({ rows: 12, cols: 12, screen });
+  
+  logBox = grid.set(8, 0, 4, 12, blessed.log, {
+    label: ' Live Logs ',
+    border: { type: 'line' },
+    style: { fg: 'white', border: { fg: 'cyan' }},
+    scrollable: true
+  });
+
+  donut = grid.set(0, 0, 4, 4, contrib.donut, {
+    label: ' Status ',
+    radius: 16,
+    arcWidth: 8,
+    data: [
+      { label: 'Success', percent: 0, color: 'green' },
+      { label: 'Failed', percent: 0, color: 'red' },
+      { label: 'Skipped', percent: 0, color: 'yellow' }
+    ]
+  });
+
+  line = grid.set(0, 4, 4, 8, contrib.line, {
+    label: ' ETH Flow ',
+    showLegend: true,
+    legend: { width: 12 }
+  });
+
+  table = grid.set(4, 0, 4, 12, contrib.table, {
+    label: ' Wallet Balances ',
+    columnWidth: [25, 15, 12, 18, 14],
+    columnSpacing: 2,
+    interactive: true
+  });
+
+  // Key bindings
+  screen.key(['escape', 'q', 'C-c'], gracefulShutdown);
 }
 
 function updateDashboard() {
   donut.setData([
-    { label: 'Success', percent: (success / totalWallets) * 100 || 0, color: 'green' },
-    { label: 'Fail', percent: (failed / totalWallets) * 100 || 0, color: 'red' },
-    { label: 'Skipped', percent: (skipped / totalWallets) * 100 || 0, color: 'yellow' },
+    { label: 'Success', percent: (success / privateKeys.length) * 100 || 0, color: 'green' },
+    { label: 'Failed', percent: (failed / privateKeys.length) * 100 || 0, color: 'red' },
+    { label: 'Skipped', percent: (skipped / privateKeys.length) * 100 || 0, color: 'yellow' }
   ]);
-  line.setData([{ title: 'ETH Sent', x: ethFlowData.x, y: ethFlowData.y }]);
+
+  line.setData([{
+    title: 'ETH Sent',
+    x: ethFlowData.x,
+    y: ethFlowData.y,
+    style: { line: 'green' }
+  }]);
+
   screen.render();
+}
+
+function gracefulShutdown() {
+  try {
+    // Stop all workers
+    if (cluster.isPrimary && cluster.workers) {
+      for (const id in cluster.workers) {
+        cluster.workers[id].kill();
+      }
+    }
+    
+    // Destroy UI
+    screen.destroy();
+    
+    // Stop progress bar if exists
+    if (progressBar) progressBar.stop();
+    
+  } catch (err) {
+    console.error('Shutdown error:', err);
+  } finally {
+    process.exit(0);
+  }
 }
 
 async function processWallet(pk, index) {
   const wallet = new ethers.Wallet(pk, provider);
   const address = await wallet.getAddress();
-  const spinner = ora(`🔐 Processing ${address}`).start();
+  const spinner = ora(`Processing ${address}`).start();
   const now = new Date().toLocaleString();
 
   try {
+    // Check balance
     const balance = await provider.getBalance(address);
     const balanceEth = ethers.formatEther(balance);
-    
-    if (balance < ethers.parseEther('0.002')) {
+    const minBalanceWei = ethers.parseEther(config.minBalance);
+
+    if (balance < minBalanceWei) {
       skipped++;
-      logBox.log(`⚠ Skipped [${address}] - Low balance (${balanceEth} ETH)`);
+      logBox.log(`⚠ ${address} - Low balance (${balanceEth} ETH)`);
       table.rows.push([address, balanceEth, 'Skipped', '-', now]);
-      spinner.fail(`Skipped (Low balance: ${balanceEth} ETH)`);
+      spinner.warn(`Skipped (${balanceEth} ETH)`);
       return;
     }
 
+    // Estimate gas with buffer
     const feeData = await provider.getFeeData();
     const gasEstimate = await provider.estimateGas({
       to: targetAddress,
       from: address,
-      value: balance - (feeData.maxFeePerGas * 21000n) // Leave some for gas
+      value: balance - (feeData.maxFeePerGas * 21000n)
     });
 
-    const gasCost = gasEstimate * (feeData.maxFeePerGas || feeData.gasPrice);
+    const gasCost = (gasEstimate * (feeData.maxFeePerGas || feeData.gasPrice)) * config.gasBuffer;
     const amount = balance - gasCost;
 
     if (amount <= 0n) {
       skipped++;
-      logBox.log(`⚠ Skipped [${address}] - Insufficient balance after gas`);
+      logBox.log(`⚠ ${address} - Insufficient balance after gas`);
       table.rows.push([address, balanceEth, 'Skipped', '-', now]);
-      spinner.fail('Skipped (Insufficient after gas)');
+      spinner.warn('Insufficient after gas');
       return;
     }
 
+    // Send transaction
     const tx = await wallet.sendTransaction({
       to: targetAddress,
       value: amount,
@@ -126,97 +195,111 @@ async function processWallet(pk, index) {
     });
 
     const receipt = await tx.wait();
+    const amountEth = ethers.formatEther(amount);
+
     if (receipt.status === 1) {
       success++;
-      const amountEth = ethers.formatEther(amount);
       ethFlowData.x.push(index.toString());
       ethFlowData.y.push(Number(amountEth));
-      logBox.log(chalk.green(`✔ ${now} | ${address} | ${amountEth} ETH | ${tx.hash} | Success`));
-      table.rows.push([address, amountEth, 'Success', tx.hash, now]);
+      logBox.log(chalk.green(`✔ ${now} | ${amountEth} ETH | ${tx.hash}`));
+      table.rows.push([address, amountEth, 'Success', tx.hash.slice(0, 12) + '...', now]);
       spinner.succeed(`Sent ${amountEth} ETH`);
     } else {
       failed++;
-      logBox.log(chalk.red(`✖ ${now} | ${address} | Transaction failed`));
-      table.rows.push([address, balanceEth, 'Failed', tx.hash, now]);
+      logBox.log(chalk.red(`✖ ${now} | Transaction failed`));
+      table.rows.push([address, balanceEth, 'Failed', tx.hash.slice(0, 12) + '...', now]);
       spinner.fail('Transaction failed');
     }
   } catch (err) {
     failed++;
-    logBox.log(chalk.red(`✖ ${now} | ${address} | Error: ${err.message}`));
+    logBox.log(chalk.red(`✖ ${now} | Error: ${err.message}`));
     table.rows.push([address, '-', 'Failed', '-', now]);
     spinner.fail(err.message);
+  } finally {
+    updateDashboard();
   }
-
-  updateDashboard();
 }
 
-console.log(chalk.cyan(figlet.textSync('MEGA ETH')));
-console.log(chalk.green(`🚀 Starting MEGA ETH Consolidation`));
-console.log(`📌 Chain ID: ${chainId}`);
-console.log(`🎯 Target Address: ${targetAddress}`);
-console.log(`🔑 Wallets to process: ${totalWallets}\n`);
+// ====== Main Execution ======
+async function main() {
+  // Initialize
+  if (!loadFiles()) process.exit(1);
+  
+  provider = new ethers.JsonRpcProvider(config.rpcUrl);
+  await provider.ready; // Ensure connection
+  
+  console.log(chalk.cyan(figlet.textSync('MEGA ETH')));
+  console.log(chalk.green(`🚀 Starting consolidation to ${targetAddress}`));
+  console.log(`🔗 RPC: ${config.rpcUrl}`);
+  console.log(`🔑 Wallets: ${privateKeys.length}\n`);
 
-// Verify connection
-provider.getBlockNumber()
-  .then(() => console.log(chalk.green(`✅ Connected to ${rpcUrl}`)))
-  .catch(err => {
-    console.error(chalk.red(`❌ Connection failed: ${err.message}`));
-    process.exit(1);
-  });
+  // Initialize UI
+  initUI();
+  
+  progressBar = new cliProgress.SingleBar({
+    format: '{bar} | {percentage}% | {value}/{total} wallets',
+    barCompleteChar: '█',
+    barIncompleteChar: '░',
+  }, cliProgress.Presets.shades_classic);
+  
+  progressBar.start(privateKeys.length, 0);
 
-const clusters = clusterWallets(privateKeys);
-const progressBar = new cliProgress.SingleBar({
-  format: 'Progress |{bar}| {percentage}% | {value}/{total} wallets',
-  barCompleteChar: '\u2588',
-  barIncompleteChar: '\u2591',
-}, cliProgress.Presets.shades_classic);
-progressBar.start(totalWallets, 0);
-
-(async () => {
+  // Cluster setup
   if (cluster.isPrimary) {
+    const clusters = clusterWallets(privateKeys);
     let completed = 0;
-    
+
     // Fork workers
-    for (let i = 0; i < Math.min(numCPUs, clusters.length); i++) {
+    for (let i = 0; i < Math.min(config.maxWorkers, clusters.length); i++) {
       cluster.fork();
     }
 
-    cluster.on('message', (worker, msg) => {
-      if (msg.done) {
-        completed += msg.count;
-        progressBar.update(completed);
-        
-        if (completed >= totalWallets) {
-          progressBar.stop();
-          console.log(chalk.green('\n✨ All workers completed!'));
-          setTimeout(() => process.exit(0), 3000);
-        }
+    cluster.on('message', (worker, { count }) => {
+      completed += count;
+      progressBar.update(completed);
+      
+      if (completed >= privateKeys.length) {
+        progressBar.stop();
+        logBox.log(chalk.green('\n✨ All transactions completed!'));
+        setTimeout(gracefulShutdown, 3000);
       }
     });
 
-    cluster.on('exit', (worker, code, signal) => {
-      console.log(chalk.yellow(`Worker ${worker.process.pid} exited`));
+    cluster.on('exit', (worker) => {
+      logBox.log(`Worker ${worker.process.pid} exited`);
     });
+
   } else {
-    let count = 0;
+    // Worker process
     const workerId = cluster.worker.id;
-    const startIdx = workerId - 1;
-    
+    const clusters = clusterWallets(privateKeys);
+    let count = 0;
+
     try {
-      for (let i = startIdx; i < clusters.length; i += numCPUs) {
-        const clusterGroup = clusters[i];
-        for (const pk of clusterGroup) {
-          count++;
-          await processWallet(pk, count);
-          process.send?.({ done: true, count });
+      for (let i = workerId - 1; i < clusters.length; i += config.maxWorkers) {
+        for (const pk of clusters[i]) {
+          await processWallet(pk, ++count);
+          process.send?.({ count });
         }
       }
     } catch (err) {
-      console.error(chalk.red(`Worker ${workerId} error:`), err);
-    } finally {
-      process.send?.({ done: true, count });
+      logBox.log(chalk.red(`Worker ${workerId} error: ${err.message}`));
     }
   }
-})();
+}
 
-screen.key(['escape', 'q', 'C-c'], () => process.exit(0));
+// Error handling
+process.on('uncaughtException', (err) => {
+  console.error('Uncaught Exception:', err);
+  gracefulShutdown();
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled Rejection:', reason);
+});
+
+// Start application
+main().catch(err => {
+  console.error('Fatal error:', err);
+  process.exit(1);
+});
