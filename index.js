@@ -12,7 +12,7 @@ class ETHConsolidator {
       "https://testnet.megaeth.io/rpc"
     ];
     this.CHAIN_ID = 6342;
-    this.MIN_BALANCE = 0.0015;
+    this.MIN_BALANCE = 0.0003; // updated threshold
     this.TX_DELAY_MS = 1000;
     this.successCount = 0;
     this.failCount = 0;
@@ -86,8 +86,8 @@ class ETHConsolidator {
   updateStatusBox() {
     const total = this.successCount + this.failCount + this.skippedCount;
     this.statusBox.setContent(
-      `{bold}Total {green-fg}Success:{/green-fg}{/bold} ${this.successCount}\n` +
-      `{bold}Total {red-fg}Failed:{/red-fg}{/bold} ${this.failCount}\n` +
+      `{bold}Total Success:{/bold} ${this.successCount}\n` +
+      `{bold}Total Failed:{/bold} ${this.failCount}\n` +
       `{bold}Total Skipped:{/bold} ${this.skippedCount}\n` +
       `{bold}Final Status:{/bold} ${total === this.privateKeys?.length ? "Completed" : "Processing..."}`
     );
@@ -140,7 +140,7 @@ class ETHConsolidator {
       this.log(`  Current Balance: ${balance.toFixed(6)} ETH`);
 
       if (balance <= this.MIN_BALANCE) {
-        this.log(`  Skipping - needs minimum ${this.MIN_BALANCE} ETH`);
+        this.log(`  Skipping - balance below ${this.MIN_BALANCE} ETH threshold`);
         this.skippedCount++;
         this.updateTable(address, balance.toFixed(6), "0.000000", "Skipped", balance.toFixed(6), "Low balance");
         return;
