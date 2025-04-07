@@ -13,6 +13,9 @@ cd megaeth-faucet-sender
 pip install -r requirements.txt
 ```
 ```bash
+private_keys.txt
+```
+```bash
 python bot.py
 ```
 
